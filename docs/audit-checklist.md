@@ -98,7 +98,7 @@ Leyenda: ✅ verificado con evidencia · 🔧 fallo encontrado **y corregido** e
 ### 9. Migraciones y base de datos
 - [x] ✅ 3 migraciones con `up()`/`down()`; la e2e revierte las tres y las reaplica.
 - [x] ✅ Aplicadas sobre una base existente con datos (desarrollo) sin pérdida (`DEFAULT 1`).
-- [x] ✅ Instalación desde cero siguiendo el README (realizada antes de la auditoría; los pasos no cambian, solo hay una migración más).
+- [x] ✅ Instalación desde cero en un clon limpio tras la auditoría: 3 migraciones, 194/194 unitarias, 45/45 e2e, API compilada responde 201.
 
 ## Qué tienes que hacer tú si ya tenías el proyecto
 ```bash
