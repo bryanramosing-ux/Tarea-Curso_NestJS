@@ -2,6 +2,7 @@
 
 | Carpeta / archivo | Contenido |
 |---|---|
+| [`guia-paso-a-paso.md`](guia-paso-a-paso.md) | **Guía de aprendizaje**: reconstruir el proyecto desde cero, fase por fase, con preguntas de repaso |
 | [`architecture/overview.md`](architecture/overview.md) | Capas, regla de dependencias, flujo de una petición, CQRS, errores y validación |
 | [`architecture/bounded-contexts.md`](architecture/bounded-contexts.md) | Mapa de contextos Users / Tasks, ACL y por qué están separados |
 | [`architecture/domain-events.md`](architecture/domain-events.md) | Catálogo de eventos, cuándo se publican y quién los escucha |

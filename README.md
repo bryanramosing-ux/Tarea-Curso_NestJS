@@ -11,6 +11,8 @@ gestionado exclusivamente por **migraciones**.
 
 ---
 
+> 📚 ¿Quieres aprender a construirlo tú mismo? Sigue la guía [`docs/guia-paso-a-paso.md`](docs/guia-paso-a-paso.md).
+
 ## Índice
 
 1. [Requisitos](#1-requisitos)
