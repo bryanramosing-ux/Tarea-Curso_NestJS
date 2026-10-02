@@ -11,6 +11,8 @@ gestionado exclusivamente por **migraciones**.
 
 ---
 
+> 🚀 ¿Primera vez? Empieza por [`docs/EMPIEZA-AQUI.md`](docs/EMPIEZA-AQUI.md): de cero a la entrega, en orden.
+>
 > 📚 ¿Quieres aprender a construirlo tú mismo? Sigue la guía [`docs/guia-paso-a-paso.md`](docs/guia-paso-a-paso.md).
 
 ## Índice
