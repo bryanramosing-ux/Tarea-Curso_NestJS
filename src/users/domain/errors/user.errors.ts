@@ -68,3 +68,14 @@ export class UserAlreadyInactiveError extends DomainException {
     super('USER_ALREADY_INACTIVE', DomainErrorKind.CONFLICT, `User "${id}" is already inactive`);
   }
 }
+
+/** Otra operación modificó el usuario después de leerlo (bloqueo optimista). */
+export class UserConcurrentModificationError extends DomainException {
+  constructor(id: string) {
+    super(
+      'USER_CONCURRENT_MODIFICATION',
+      DomainErrorKind.CONFLICT,
+      `User "${id}" was modified by another operation; reload it and try again`,
+    );
+  }
+}

@@ -29,6 +29,7 @@ erDiagram
     varchar_16 status "CHECK ACTIVE|INACTIVE"
     timestamptz created_at
     timestamptz updated_at
+    integer version "CHECK >= 1"
   }
   tasks {
     uuid id PK
@@ -39,6 +40,7 @@ erDiagram
     uuid assignee_id "NULL, FK fk_tasks_assignee"
     timestamptz created_at
     timestamptz updated_at
+    integer version "CHECK >= 1"
   }
 ```
 
@@ -53,6 +55,7 @@ erDiagram
 | `ck_tasks_status`, `ck_tasks_priority` | CHECK | RN-009, RN-014 | Defensa en profundidad |
 | `ck_tasks_assignee_required` | CHECK `status = 'TODO' OR assignee_id IS NOT NULL` | RN-010 | La invariante se mantiene aunque se escriba fuera de la app |
 | `ix_tasks_status_created_at` | INDEX | Filtro por columna del tablero ordenado | Consulta `GET /tasks?status=` |
+| `ck_users_version`, `ck_tasks_version` | CHECK `version >= 1` | Bloqueo optimista (ADR-011) | Defensa en profundidad |
 | `ix_tasks_assignee_id` | INDEX | Filtro por responsable / liberación de tareas | `GET /tasks?assigneeId=`, RN-013 |
 
 ## Migraciones
@@ -61,9 +64,10 @@ erDiagram
 |---|---|---|
 | `1759363200000-CreateUsersTable.ts` | `CREATE TABLE users` + PK, UNIQUE, CHECK | `DROP TABLE users` |
 | `1759363260000-CreateTasksTable.ts` | `CREATE TABLE tasks` + PK, FK, CHECKs, 2 índices | `DROP INDEX` ×2, `DROP TABLE tasks` |
+| `1759413600000-AddOptimisticLockingVersion.ts` | columna `version` + CHECK en ambas tablas | `DROP CONSTRAINT`, `DROP COLUMN` |
 
-Evidencia de reversibilidad: `test/e2e/migrations.e2e-spec.ts` revierte ambas
-migraciones, comprueba que las tablas desaparecen y las vuelve a aplicar.
+Evidencia de reversibilidad: `test/e2e/migrations.e2e-spec.ts` revierte las tres
+migraciones, comprueba que la columna `version` y las tablas desaparecen y las vuelve a aplicar.
 
 ## Adaptadores de repositorio
 
@@ -74,3 +78,14 @@ migraciones, comprueba que las tablas desaparecen y las vuelve a aplicar.
 
 Contrato común: `findById` devuelve `null` si no existe (no lanza); los adaptadores
 solo consultan, guardan y traducen; los listados se ordenan por `created_at, id`.
+
+## Bloqueo optimista (ADR-011)
+
+- Un agregado nuevo tiene `version = 0` y se **inserta** con `version = 1`.
+- Uno existente se guarda con `UPDATE … SET …, version = version + 1 WHERE id = ? AND version = ?`.
+  Si no se actualiza ninguna fila, otra operación lo modificó después de leerlo y el
+  adaptador lanza `*_CONCURRENT_MODIFICATION` (409) en lugar de sobrescribir.
+- Tras guardar, el adaptador llama a `markAsPersisted()` (la instancia queda en la versión nueva).
+- El adaptador en memoria emula exactamente el mismo contrato.
+- Evidencia: `test/e2e/concurrency.e2e-spec.ts` (adaptador real) y los specs en memoria;
+  se comprobó que la prueba e2e falla si se restaura el `save()` anterior.

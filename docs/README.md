@@ -13,3 +13,4 @@
 | [`decisions/`](decisions/README.md) | ADRs: decisiones arquitectónicas y su porqué |
 | [`technical-debt.md`](technical-debt.md) | Deuda técnica y limitaciones conocidas |
 | [`rubric-self-assessment.md`](rubric-self-assessment.md) | Auditoría criterio por criterio contra la rúbrica |
+| [`audit-checklist.md`](audit-checklist.md) | Checklist completo de verificación: vulnerabilidades, bugs y errores encontrados y corregidos |

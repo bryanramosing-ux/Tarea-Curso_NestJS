@@ -191,15 +191,25 @@ describe('Task aggregate', () => {
   });
 
   describe('toPrimitives / fromPrimitives', () => {
+    /** Lo que devolvería la base de datos: siempre con versión >= 1. */
+    const storedRow = (status: string): TaskPrimitives => ({ ...taskIn(status).toPrimitives(), version: 3 });
+
     it('round-trips without emitting events', () => {
-      const original = taskIn('IN_REVIEW');
-      const restored = Task.fromPrimitives(original.toPrimitives());
-      expect(restored.toPrimitives()).toEqual(original.toPrimitives());
+      const row = storedRow('IN_REVIEW');
+      const restored = Task.fromPrimitives(row);
+      expect(restored.toPrimitives()).toEqual(row);
+      expect(restored.version).toBe(3);
       expect(restored.pullDomainEvents()).toEqual([]);
     });
 
+    it('rejects a stored version below 1', () => {
+      expect(() => Task.fromPrimitives({ ...storedRow('TODO'), version: 0 })).toThrow(
+        expect.objectContaining({ code: 'INVALID_AGGREGATE_VERSION' }),
+      );
+    });
+
     it('re-validates value objects and invariants when reconstructing', () => {
-      const valid = taskIn('IN_PROGRESS').toPrimitives();
+      const valid = storedRow('IN_PROGRESS');
       const corrupt = (patch: Partial<TaskPrimitives>): TaskPrimitives => ({ ...valid, ...patch });
 
       expect(() => Task.fromPrimitives(corrupt({ title: 'x' }))).toThrow(InvalidTaskTitleError);

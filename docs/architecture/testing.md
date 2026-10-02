@@ -6,7 +6,7 @@
 | Unitarias de aplicación | `pnpm test` | `src/*/application/**/*.spec.ts` | Ninguna: handlers instanciados con `new` y adaptadores **en memoria** | Orquestación, errores NOT_FOUND/CONFLICT/VALIDATION, eventos publicados **después** de persistir |
 | Unitarias de infraestructura | `pnpm test` | `src/*/infrastructure/**/*.spec.ts`, `src/shared`, `src/config` | Ninguna | Mappers, hasher scrypt, ACL Users→Tasks, filtro de errores, validación de entorno |
 | Arquitectura | `pnpm test` | `test/architecture/architecture.spec.ts` | Ninguna (lee el código fuente) | Regla de dependencias, faltas graves de la rúbrica, ausencia de `skip`/`only` |
-| End-to-end | `pnpm test:e2e` | `test/e2e/*.e2e-spec.ts` | PostgreSQL real (Docker) + **migraciones reales** | 200/201/204, 400, 404, 409; unicidad concurrente; CHECK/FK; evento entre contextos; `down()` reversible |
+| End-to-end | `pnpm test:e2e` | `test/e2e/*.e2e-spec.ts` | PostgreSQL real (Docker) + **migraciones reales** | 200/201/204, 400, 404, 409, 413; unicidad concurrente; bloqueo optimista; CHECK/FK; evento entre contextos; cabeceras de seguridad y entradas hostiles; `down()` reversible |
 
 ## Decisiones
 
@@ -25,6 +25,6 @@
 ## Resultados de la última ejecución local
 
 ```
-pnpm test      → Test Suites: 25 passed · Tests: 180 passed
-pnpm test:e2e  → Test Suites: 3 passed  · Tests: 35 passed
+pnpm test      → Test Suites: 26 passed · Tests: 194 passed
+pnpm test:e2e  → Test Suites: 5 passed  · Tests: 45 passed
 ```

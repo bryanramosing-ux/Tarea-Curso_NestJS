@@ -95,3 +95,14 @@ export class TaskAlreadyDoneError extends DomainException {
     super('TASK_ALREADY_DONE', DomainErrorKind.CONFLICT, `Task "${id}" is DONE and can no longer change`);
   }
 }
+
+/** Otra operación modificó la tarea después de leerla (bloqueo optimista). */
+export class TaskConcurrentModificationError extends DomainException {
+  constructor(id: string) {
+    super(
+      'TASK_CONCURRENT_MODIFICATION',
+      DomainErrorKind.CONFLICT,
+      `Task "${id}" was modified by another operation; reload it and try again`,
+    );
+  }
+}

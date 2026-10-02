@@ -73,16 +73,19 @@ describe('User aggregate', () => {
   });
 
   describe('toPrimitives / fromPrimitives', () => {
-    it('round-trips without emitting events', () => {
-      const original = registerUser();
-      const restored = User.fromPrimitives(original.toPrimitives());
+    /** Lo que devolvería la base de datos: siempre con versión >= 1. */
+    const storedRow = (): UserPrimitives => ({ ...registerUser().toPrimitives(), version: 1 });
 
-      expect(restored.toPrimitives()).toEqual(original.toPrimitives());
+    it('round-trips without emitting events', () => {
+      const row = storedRow();
+      const restored = User.fromPrimitives(row);
+
+      expect(restored.toPrimitives()).toEqual(row);
       expect(restored.pullDomainEvents()).toEqual([]);
     });
 
     it('re-validates every value when reconstructing', () => {
-      const valid = registerUser().toPrimitives();
+      const valid = storedRow();
       const corrupt = (patch: Partial<UserPrimitives>): UserPrimitives => ({ ...valid, ...patch });
 
       expect(() => User.fromPrimitives(corrupt({ email: 'broken' }))).toThrow(InvalidEmailError);
@@ -96,8 +99,26 @@ describe('User aggregate', () => {
     });
 
     it('normalizes values on reconstruction', () => {
-      const restored = User.fromPrimitives({ ...registerUser().toPrimitives(), email: ' ANA@startup.io ' });
+      const restored = User.fromPrimitives({ ...storedRow(), email: ' ANA@startup.io ' });
       expect(restored.email.value).toBe('ana@startup.io');
+    });
+  });
+
+  describe('version (bloqueo optimista)', () => {
+    it('a new user has never been persisted (version 0)', () => {
+      expect(registerUser().version).toBe(0);
+    });
+
+    it('increments when the persistence adapter confirms a save', () => {
+      const user = registerUser();
+      user.markAsPersisted();
+      expect(user.version).toBe(1);
+    });
+
+    it.each([0, -1, 1.5, Number.NaN])('rejects a stored version of %p', (version) => {
+      expect(() => User.fromPrimitives({ ...registerUser().toPrimitives(), version })).toThrow(
+        expect.objectContaining({ code: 'INVALID_AGGREGATE_VERSION', kind: DomainErrorKind.VALIDATION }),
+      );
     });
   });
 });

@@ -25,6 +25,18 @@
 | Los eventos (`UserRegistered`) no transportan credenciales | `user.spec.ts` |
 | Los errores de validación no devuelven los valores recibidos | `validationError: { target: false, value: false }` y mensajes de dominio sin el valor |
 
+## Borde HTTP
+
+| Medida | Dónde |
+|---|---|
+| Cabeceras de seguridad con `helmet` (`X-Content-Type-Options: nosniff`, CSP, `X-Frame-Options`, HSTS…) y sin `X-Powered-By` | `src/app.setup.ts`; e2e `http-security.e2e-spec.ts` |
+| Límite de cuerpo de 100 kB (por defecto de Express) → 413 | e2e `rejects bodies larger than the limit` |
+| Claves `__proto__`/`constructor` descartadas por class-transformer: sin contaminación de prototipos | e2e `ignores __proto__ / constructor payloads` |
+| Consultas parametrizadas (TypeORM): la entrada con aspecto de SQL se guarda como texto | e2e `treats SQL-looking input as plain data` |
+| Todas las respuestas de error con la misma forma, sin trazas internas | `HttpExceptionFilter` + `DomainExceptionFilter` |
+| PostgreSQL publicado solo en `127.0.0.1` (no accesible desde la red local) | `docker-compose.yml` |
+| Dependencias sin vulnerabilidades conocidas (`pnpm audit`), versiones fijadas en `package.json` + `pnpm-lock.yaml` | ver `docs/audit-checklist.md` |
+
 ## Logs
 
 - TypeORM con `logging: false`: no se registran consultas ni sus parámetros.
@@ -33,5 +45,4 @@
 
 ## Fuera de alcance (documentado)
 
-Autenticación/autorización, rate limiting y cabeceras de seguridad HTTP (helmet) no
-forman parte de esta entrega; ver [`../technical-debt.md`](../technical-debt.md).
+Autenticación/autorización y rate limiting no forman parte de esta entrega; ver [`../technical-debt.md`](../technical-debt.md).

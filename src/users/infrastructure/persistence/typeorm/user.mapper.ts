@@ -12,6 +12,7 @@ export class UserMapper {
       status: row.status,
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
+      version: row.version,
     });
   }
 
@@ -25,6 +26,7 @@ export class UserMapper {
     row.status = primitives.status;
     row.createdAt = primitives.createdAt;
     row.updatedAt = primitives.updatedAt;
+    row.version = primitives.version;
     return row;
   }
 }

@@ -18,10 +18,14 @@ Formato de respuesta de un error de dominio:
 
 ## Borde HTTP (no son errores de dominio)
 
+Lo traduce `HttpExceptionFilter` con la misma forma `{ statusCode, code, message, path, timestamp }`.
+
 | Código | HTTP | Cuándo |
 |---|---|---|
-| `REQUEST_VALIDATION_FAILED` | 400 | El DTO no cumple tipos/tamaños o trae propiedades no permitidas (`message` es la lista de problemas) |
-| *(Nest `ParseUUIDPipe`)* | 400 | `:id` en la ruta no es un UUID |
+| `REQUEST_VALIDATION_FAILED` | 400 | El DTO no cumple tipos/tamaños, trae propiedades no permitidas, o el `:id` de la ruta no es un UUID (`message` es la lista de problemas) |
+| `BAD_REQUEST` | 400 | El cuerpo no es JSON válido |
+| `ROUTE_NOT_FOUND` | 404 | La ruta o el método no existen |
+| *(sin código)* | 413 | El cuerpo supera 100 kB |
 
 ## Contexto Users
 
@@ -37,6 +41,7 @@ Formato de respuesta de un error de dominio:
 | `USER_NOT_FOUND` | NOT_FOUND | 404 | — |
 | `USER_EMAIL_ALREADY_IN_USE` | CONFLICT | 409 | RN-002 |
 | `USER_ALREADY_INACTIVE` | CONFLICT | 409 | RN-005 |
+| `USER_CONCURRENT_MODIFICATION` | CONFLICT | 409 | Otra operación modificó el usuario a la vez (bloqueo optimista, ADR-011) |
 
 ## Contexto Tasks
 
@@ -55,3 +60,10 @@ Formato de respuesta de un error de dominio:
 | `TASK_INVALID_STATUS_TRANSITION` | CONFLICT | 409 | RN-009 |
 | `TASK_REQUIRES_ASSIGNEE` | CONFLICT | 409 | RN-010 |
 | `TASK_ALREADY_DONE` | CONFLICT | 409 | RN-012 |
+| `TASK_CONCURRENT_MODIFICATION` | CONFLICT | 409 | Otra operación modificó la tarea a la vez (bloqueo optimista, ADR-011) |
+
+## Comunes
+
+| Código | Kind | HTTP | Cuándo |
+|---|---|---|---|
+| `INVALID_AGGREGATE_VERSION` | VALIDATION | 400 | Una fila almacenada tiene una versión inválida (dato corrupto) |

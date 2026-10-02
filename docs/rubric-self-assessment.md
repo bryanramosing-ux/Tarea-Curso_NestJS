@@ -14,8 +14,8 @@ siguiendo solo el README:
 | `pnpm migration:run` **sin** `.env` | Falla al arrancar: `Invalid environment configuration (check your .env)` (esperado) |
 | `cp .env.example .env` + `docker compose up -d --wait` | `kanban-postgres Healthy` |
 | `pnpm migration:run` | 2 migraciones ejecutadas |
-| `pnpm test` | 25 suites, **180 pruebas en verde** |
-| `pnpm test:e2e` | 3 suites, **35 pruebas en verde** |
+| `pnpm test` | 25 suites, **180 pruebas en verde** (antes de la auditoría; tras ella: 26 suites, **194**) |
+| `pnpm test:e2e` | 3 suites, **35 pruebas en verde** (tras la auditoría: 5 suites, **45**) |
 | `pnpm build` + `node dist/main` + `POST /users` | `Kanban API listening on port 3000` → `201 {"id": …}` |
 
 ## Comprobaciones específicas (sección de autoevaluación de la rúbrica)
@@ -33,8 +33,8 @@ siguiendo solo el README:
 | 9 | Ningún `domain/` importa otro `domain/` | ✅ | `test/architecture` |
 | 10 | Eventos publicados después de persistir | ✅ | Espías en tests de handlers + regla estática |
 | 11 | `process.env` solo en configuración | ✅ | `test/architecture` |
-| 12 | `pnpm test` | ✅ 180/180 | ejecución |
-| 13 | `pnpm test:e2e` | ✅ 35/35 | ejecución |
+| 12 | `pnpm test` | ✅ 194/194 | ejecución |
+| 13 | `pnpm test:e2e` | ✅ 45/45 | ejecución |
 | 14 | Instalación desde cero siguiendo el README | ✅ | ver tabla anterior |
 
 ## Faltas graves
@@ -94,7 +94,7 @@ siguiendo solo el README:
 ## 6. Pruebas (10)
 
 - **Requisitos**: unitarias sin Nest ni BD; e2e con base real y migraciones reales; en verde.
-- **Implementación**: 180 unitarias/arquitectura; 35 e2e con `global-setup` que aplica migraciones reales.
+- **Implementación**: 194 unitarias/arquitectura; 45 e2e con `global-setup` que aplica migraciones reales.
 - **Archivos**: `src/**/*.spec.ts`, `test/architecture/`, `test/e2e/`.
 - **Evidencia**: ejecución desde cero (tabla inicial).
 - **Estado**: **CUMPLE**.
@@ -129,6 +129,12 @@ siguiendo solo el README:
 - **Implementación**: README (requisitos → instalación → Docker → migraciones → tests → endpoints → arquitectura → problemas conocidos); `docs/business-rules` (RN-001…RN-014 con archivo y pruebas); 10 ADRs; deuda técnica.
 - **Evidencia**: instalación desde cero siguiendo solo el README.
 - **Estado**: **CUMPLE**.
+
+## Auditoría posterior
+
+Una auditoría de seguridad y bugs encontró y corrigió una pérdida de actualizaciones
+concurrentes (bloqueo optimista, ADR-011) y endureció el borde HTTP. Detalle y
+checklist completo en [`audit-checklist.md`](audit-checklist.md).
 
 ## Pendiente de validación
 

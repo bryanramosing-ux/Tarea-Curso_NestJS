@@ -1,4 +1,5 @@
 import { Task, TaskPrimitives } from '../../../domain/entities/task';
+import { TaskConcurrentModificationError } from '../../../domain/errors/task.errors';
 import { TaskRepository, TaskSearchCriteria } from '../../../domain/ports/task.repository';
 import { AssigneeId } from '../../../domain/value-objects/assignee-id';
 import { TaskId } from '../../../domain/value-objects/task-id';
@@ -6,14 +7,20 @@ import { TaskStatusValue } from '../../../domain/value-objects/task-status';
 
 /**
  * Adaptador en memoria del puerto TaskRepository (pruebas unitarias).
- * Guarda copias de las primitivas y reconstruye con fromPrimitives.
+ * Guarda copias de las primitivas, reconstruye con fromPrimitives y emula el
+ * bloqueo optimista por versión del adaptador real.
  */
 export class InMemoryTaskRepository implements TaskRepository {
   private readonly rows = new Map<string, TaskPrimitives>();
 
   async save(task: Task): Promise<void> {
     const primitives = task.toPrimitives();
-    this.rows.set(primitives.id, primitives);
+    const stored = this.rows.get(primitives.id);
+    if ((stored?.version ?? 0) !== primitives.version) {
+      throw new TaskConcurrentModificationError(primitives.id);
+    }
+    this.rows.set(primitives.id, { ...primitives, version: primitives.version + 1 });
+    task.markAsPersisted();
   }
 
   async findById(id: TaskId): Promise<Task | null> {

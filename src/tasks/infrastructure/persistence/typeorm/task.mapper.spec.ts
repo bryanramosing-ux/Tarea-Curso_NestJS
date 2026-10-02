@@ -15,12 +15,14 @@ describe('TaskMapper', () => {
 
   it('maps to a separate ORM class and back without losing data', () => {
     const row = TaskMapper.toPersistence(task);
+    row.version = 1; // las filas almacenadas siempre tienen versión >= 1
     expect(row).toBeInstanceOf(TaskOrmEntity);
-    expect(TaskMapper.toDomain(row).toPrimitives()).toEqual(task.toPrimitives());
+    expect(TaskMapper.toDomain(row).toPrimitives()).toEqual({ ...task.toPrimitives(), version: 1 });
   });
 
   it('refuses rows that break the aggregate invariants', () => {
     const row = TaskMapper.toPersistence(task);
+    row.version = 1; // las filas almacenadas siempre tienen versión >= 1
     row.assigneeId = null;
     expect(() => TaskMapper.toDomain(row)).toThrow(TaskInvariantViolationError);
   });

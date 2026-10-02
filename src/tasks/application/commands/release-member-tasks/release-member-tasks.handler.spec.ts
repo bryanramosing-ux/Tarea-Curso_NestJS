@@ -1,5 +1,6 @@
 import { InMemoryDomainEventPublisher } from '../../../../shared/infrastructure/events/in-memory-domain-event-publisher';
 import { Task } from '../../../domain/entities/task';
+import { TaskConcurrentModificationError } from '../../../domain/errors/task.errors';
 import { TaskUnassigned } from '../../../domain/events/task-unassigned.event';
 import { AssigneeId } from '../../../domain/value-objects/assignee-id';
 import { TaskId } from '../../../domain/value-objects/task-id';
@@ -8,7 +9,7 @@ import { TaskTitle } from '../../../domain/value-objects/task-title';
 import { TeamMember } from '../../../domain/value-objects/team-member';
 import { InMemoryTaskRepository } from '../../../infrastructure/persistence/in-memory/in-memory-task.repository';
 import { ReleaseMemberTasksCommand } from './release-member-tasks.command';
-import { ReleaseMemberTasksHandler } from './release-member-tasks.handler';
+import { RELEASE_MAX_ATTEMPTS, ReleaseMemberTasksHandler } from './release-member-tasks.handler';
 
 const ANA = AssigneeId.create('7c9e6679-7425-40de-944b-e07fc1f90ae7');
 const LUIS = AssigneeId.create('1b4e28ba-2fa1-41d2-883f-0016d3cca427');
@@ -52,5 +53,60 @@ describe('ReleaseMemberTasksHandler (RN-013)', () => {
     );
     expect(result.releasedTaskIds).toEqual([]);
     expect(events.published).toEqual([]);
+  });
+});
+
+describe('ReleaseMemberTasksHandler under concurrent modifications', () => {
+  /** Simula que otra petición modifica la tarea entre la lectura del handler y su guardado. */
+  function concurrentlyModify(tasks: InMemoryTaskRepository, change: (task: Task) => void): void {
+    const original = tasks.findUnfinishedByAssignee.bind(tasks);
+    jest.spyOn(tasks, 'findUnfinishedByAssignee').mockImplementation(async (assigneeId) => {
+      const staleCopies = await original(assigneeId);
+      for (const stale of staleCopies) {
+        const fresh = (await tasks.findById(stale.id))!;
+        change(fresh);
+        await tasks.save(fresh);
+      }
+      return staleCopies;
+    });
+  }
+
+  it('reloads and retries, so the task never stays with a deactivated member', async () => {
+    const tasks = new InMemoryTaskRepository();
+    const events = new InMemoryDomainEventPublisher();
+    const task = await storeTask(tasks, ANA, ['IN_PROGRESS']);
+    concurrentlyModify(tasks, (fresh) => fresh.changeStatus(TaskStatus.create('IN_REVIEW')));
+
+    const result = await new ReleaseMemberTasksHandler(tasks, events).execute(new ReleaseMemberTasksCommand(ANA.value));
+
+    expect(result.releasedTaskIds).toEqual([task.id.value]);
+    expect((await tasks.findById(task.id))?.toPrimitives()).toMatchObject({ status: 'TODO', assigneeId: null });
+    expect(events.published).toEqual([expect.objectContaining({ previousStatus: 'IN_REVIEW' })]);
+  });
+
+  it('skips a task that, after reloading, is no longer assigned to the member', async () => {
+    const tasks = new InMemoryTaskRepository();
+    const events = new InMemoryDomainEventPublisher();
+    const task = await storeTask(tasks, ANA, ['IN_PROGRESS']);
+    concurrentlyModify(tasks, (fresh) => fresh.assignTo(TeamMember.create({ id: LUIS, active: true })));
+
+    const result = await new ReleaseMemberTasksHandler(tasks, events).execute(new ReleaseMemberTasksCommand(ANA.value));
+
+    expect(result.releasedTaskIds).toEqual([]);
+    expect((await tasks.findById(task.id))?.isAssignedTo(LUIS)).toBe(true);
+    expect(events.published).toEqual([]);
+  });
+
+  it('gives up after RELEASE_MAX_ATTEMPTS conflicts and reports the failure', async () => {
+    const tasks = new InMemoryTaskRepository();
+    await storeTask(tasks, ANA, ['IN_PROGRESS']);
+    const save = jest.spyOn(tasks, 'save').mockRejectedValue(new TaskConcurrentModificationError('x'));
+
+    await expect(
+      new ReleaseMemberTasksHandler(tasks, new InMemoryDomainEventPublisher()).execute(
+        new ReleaseMemberTasksCommand(ANA.value),
+      ),
+    ).rejects.toBeInstanceOf(TaskConcurrentModificationError);
+    expect(save).toHaveBeenCalledTimes(RELEASE_MAX_ATTEMPTS);
   });
 });

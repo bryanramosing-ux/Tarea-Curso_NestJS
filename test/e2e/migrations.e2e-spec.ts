@@ -46,6 +46,8 @@ describe('Migrations (e2e, PostgreSQL real)', () => {
         'ck_tasks_status',
         'ck_tasks_priority',
         'ck_tasks_assignee_required',
+        'ck_users_version',
+        'ck_tasks_version',
       ]),
     );
 
@@ -57,6 +59,12 @@ describe('Migrations (e2e, PostgreSQL real)', () => {
 
   it('down() reverts every migration and up() re-applies them', async () => {
     await dataSource.undoLastMigration({ transaction: 'each' });
+    const versionColumns = await dataSource.query(
+      `SELECT table_name FROM information_schema.columns WHERE table_schema = 'public' AND column_name = 'version'`,
+    );
+    expect(versionColumns).toEqual([]);
+    expect(await tables()).toEqual(['tasks', 'users']);
+    await dataSource.undoLastMigration({ transaction: 'each' });
     expect(await tables()).toEqual(['users']);
     await dataSource.undoLastMigration({ transaction: 'each' });
     expect(await tables()).toEqual([]);
@@ -65,6 +73,7 @@ describe('Migrations (e2e, PostgreSQL real)', () => {
     expect(applied.map((migration) => migration.name)).toEqual([
       'CreateUsersTable1759363200000',
       'CreateTasksTable1759363260000',
+      'AddOptimisticLockingVersion1759413600000',
     ]);
     expect(await tables()).toEqual(['tasks', 'users']);
   });

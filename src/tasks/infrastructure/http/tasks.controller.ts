@@ -1,5 +1,6 @@
-import { Body, Controller, Get, HttpCode, HttpStatus, Param, ParseUUIDPipe, Patch, Post, Query } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, HttpStatus, Param, Patch, Post, Query } from '@nestjs/common';
 import { CommandBus, QueryBus } from '@nestjs/cqrs';
+import { parseIdPipe } from '../../../shared/infrastructure/http/parse-id.pipe';
 import { AssignTaskCommand } from '../../application/commands/assign-task/assign-task.command';
 import { ChangeTaskStatusCommand } from '../../application/commands/change-task-status/change-task-status.command';
 import { CreateTaskCommand, CreateTaskResult } from '../../application/commands/create-task/create-task.command';
@@ -31,19 +32,19 @@ export class TasksController {
   }
 
   @Get(':id')
-  findOne(@Param('id', ParseUUIDPipe) id: string): Promise<TaskView> {
+  findOne(@Param('id', parseIdPipe()) id: string): Promise<TaskView> {
     return this.queryBus.execute(new GetTaskQuery(id));
   }
 
   @Patch(':id/assignee')
   @HttpCode(HttpStatus.NO_CONTENT)
-  assign(@Param('id', ParseUUIDPipe) id: string, @Body() dto: AssignTaskDto): Promise<void> {
+  assign(@Param('id', parseIdPipe()) id: string, @Body() dto: AssignTaskDto): Promise<void> {
     return this.commandBus.execute(new AssignTaskCommand(id, dto.assigneeId));
   }
 
   @Patch(':id/status')
   @HttpCode(HttpStatus.NO_CONTENT)
-  changeStatus(@Param('id', ParseUUIDPipe) id: string, @Body() dto: ChangeTaskStatusDto): Promise<void> {
+  changeStatus(@Param('id', parseIdPipe()) id: string, @Body() dto: ChangeTaskStatusDto): Promise<void> {
     return this.commandBus.execute(new ChangeTaskStatusCommand(id, dto.status));
   }
 }

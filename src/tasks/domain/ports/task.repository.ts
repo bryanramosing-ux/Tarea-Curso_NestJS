@@ -14,6 +14,8 @@ export interface TaskSearchCriteria {
  * Puerto de persistencia del agregado Task.
  * `findById` devuelve `null` si no existe; los listados se ordenan por
  * fecha de creación ascendente (orden natural del tablero).
+ * `save` aplica bloqueo optimista: si la tarea cambió desde que se leyó,
+ * lanza TaskConcurrentModificationError en lugar de sobrescribirla.
  */
 export interface TaskRepository {
   save(task: Task): Promise<void>;

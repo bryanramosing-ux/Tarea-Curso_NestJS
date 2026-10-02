@@ -17,14 +17,16 @@ describe('UserMapper', () => {
 
   it('maps the domain entity to a different ORM class and back', () => {
     const row = UserMapper.toPersistence(user);
+    row.version = 1; // las filas almacenadas siempre tienen versión >= 1
 
     expect(row).toBeInstanceOf(UserOrmEntity);
     expect(row).not.toBeInstanceOf(User);
-    expect(UserMapper.toDomain(row).toPrimitives()).toEqual(user.toPrimitives());
+    expect(UserMapper.toDomain(row).toPrimitives()).toEqual({ ...user.toPrimitives(), version: 1 });
   });
 
   it('refuses to build a domain entity from a corrupt row', () => {
     const row = UserMapper.toPersistence(user);
+    row.version = 1; // las filas almacenadas siempre tienen versión >= 1
     row.email = 'not-an-email';
     expect(() => UserMapper.toDomain(row)).toThrow(InvalidEmailError);
   });

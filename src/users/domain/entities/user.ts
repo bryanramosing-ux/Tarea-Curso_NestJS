@@ -16,6 +16,7 @@ export interface UserPrimitives {
   status: string;
   createdAt: Date;
   updatedAt: Date;
+  version: number;
 }
 
 export interface RegisterUserProps {
@@ -38,14 +39,15 @@ export class User extends AggregateRoot {
     private _status: UserStatus,
     private readonly _createdAt: Date,
     private _updatedAt: Date,
+    version: number,
   ) {
-    super();
+    super(version);
     User.assertValidTimestamps(_createdAt, _updatedAt);
   }
 
   /** Alta de un miembro: nace ACTIVO y emite UserRegistered. */
   static register(props: RegisterUserProps, now: Date = new Date()): User {
-    const user = new User(props.id, props.name, props.email, props.passwordHash, UserStatus.active(), now, now);
+    const user = new User(props.id, props.name, props.email, props.passwordHash, UserStatus.active(), now, now, 0);
     user.record(new UserRegistered(user._id.value, user._email.value, user._name.value, now));
     return user;
   }
@@ -64,6 +66,7 @@ export class User extends AggregateRoot {
       UserStatus.create(primitives.status),
       primitives.createdAt,
       primitives.updatedAt,
+      AggregateRoot.persistedVersion(primitives.version),
     );
   }
 
@@ -114,6 +117,7 @@ export class User extends AggregateRoot {
       status: this._status.value,
       createdAt: new Date(this._createdAt),
       updatedAt: new Date(this._updatedAt),
+      version: this.version,
     };
   }
 

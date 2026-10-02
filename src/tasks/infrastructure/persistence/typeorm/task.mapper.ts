@@ -13,6 +13,7 @@ export class TaskMapper {
       assigneeId: row.assigneeId,
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
+      version: row.version,
     });
   }
 
@@ -27,6 +28,7 @@ export class TaskMapper {
     row.assigneeId = primitives.assigneeId;
     row.createdAt = primitives.createdAt;
     row.updatedAt = primitives.updatedAt;
+    row.version = primitives.version;
     return row;
   }
 }

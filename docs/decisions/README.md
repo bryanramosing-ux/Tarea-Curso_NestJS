@@ -15,3 +15,4 @@ Estado de todas: **Aceptada**.
 | [ADR-008](ADR-008-password-hashing.md) | Hash de contraseñas con scrypt nativo de Node |
 | [ADR-009](ADR-009-configuration.md) | Configuración validada fail-fast y centralizada en `src/config` |
 | [ADR-010](ADR-010-testing-strategy.md) | Estrategia de pruebas: unitarias sin infraestructura, arquitectura automatizada, e2e reales |
+| [ADR-011](ADR-011-optimistic-locking.md) | Bloqueo optimista con columna `version` para evitar actualizaciones perdidas |

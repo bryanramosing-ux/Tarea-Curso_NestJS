@@ -1,5 +1,6 @@
-import { Body, Controller, Get, HttpCode, HttpStatus, Param, ParseUUIDPipe, Post } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, HttpStatus, Param, Post } from '@nestjs/common';
 import { CommandBus, QueryBus } from '@nestjs/cqrs';
+import { parseIdPipe } from '../../../shared/infrastructure/http/parse-id.pipe';
 import { CreateUserCommand, CreateUserResult } from '../../application/commands/create-user/create-user.command';
 import { DeactivateUserCommand } from '../../application/commands/deactivate-user/deactivate-user.command';
 import { GetUserQuery } from '../../application/queries/get-user/get-user.query';
@@ -24,13 +25,13 @@ export class UsersController {
   }
 
   @Get(':id')
-  findOne(@Param('id', ParseUUIDPipe) id: string): Promise<UserView> {
+  findOne(@Param('id', parseIdPipe()) id: string): Promise<UserView> {
     return this.queryBus.execute(new GetUserQuery(id));
   }
 
   @Post(':id/deactivate')
   @HttpCode(HttpStatus.NO_CONTENT)
-  deactivate(@Param('id', ParseUUIDPipe) id: string): Promise<void> {
+  deactivate(@Param('id', parseIdPipe()) id: string): Promise<void> {
     return this.commandBus.execute(new DeactivateUserCommand(id));
   }
 }

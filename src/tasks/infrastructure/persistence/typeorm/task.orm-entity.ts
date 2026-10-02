@@ -30,4 +30,8 @@ export class TaskOrmEntity {
 
   @Column({ name: 'updated_at', type: 'timestamptz' })
   updatedAt: Date;
+
+  /** Bloqueo optimista: se incrementa en cada guardado. */
+  @Column({ type: 'integer' })
+  version: number;
 }

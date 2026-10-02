@@ -27,6 +27,7 @@ export interface TaskPrimitives {
   assigneeId: string | null;
   createdAt: Date;
   updatedAt: Date;
+  version: number;
 }
 
 export interface CreateTaskProps {
@@ -54,8 +55,9 @@ export class Task extends AggregateRoot {
     private _assigneeId: AssigneeId | null,
     private readonly _createdAt: Date,
     private _updatedAt: Date,
+    version: number,
   ) {
-    super();
+    super(version);
     this.assertInvariants();
   }
 
@@ -70,6 +72,7 @@ export class Task extends AggregateRoot {
       null,
       now,
       now,
+      0,
     );
     task.record(new TaskCreated(task._id.value, task._title.value, task._priority.value, now));
     return task;
@@ -86,6 +89,7 @@ export class Task extends AggregateRoot {
       primitives.assigneeId === null ? null : AssigneeId.create(primitives.assigneeId),
       primitives.createdAt,
       primitives.updatedAt,
+      AggregateRoot.persistedVersion(primitives.version),
     );
   }
 
@@ -182,6 +186,7 @@ export class Task extends AggregateRoot {
       assigneeId: this._assigneeId?.value ?? null,
       createdAt: new Date(this._createdAt),
       updatedAt: new Date(this._updatedAt),
+      version: this.version,
     };
   }
 

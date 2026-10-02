@@ -114,6 +114,9 @@ Migraciones incluidas (`src/database/migrations/`):
 |---|---|
 | `1759363200000-CreateUsersTable` | tabla `users`, PK, `UNIQUE (email)` (`uq_users_email`), `CHECK` de estado |
 | `1759363260000-CreateTasksTable` | tabla `tasks`, PK, FK `assignee_id → users(id)`, `CHECK`s de estado/prioridad/responsable, índices |
+| `1759413600000-AddOptimisticLockingVersion` | columna `version` (bloqueo optimista) en `users` y `tasks` |
+
+> Si ya tenías la base creada antes de esta migración, ejecuta `pnpm migration:run` de nuevo.
 
 Para crear una nueva: `pnpm typeorm migration:create src/database/migrations/NombreMigracion`
 y regístrala en `src/database/migrations/index.ts` (lista explícita).
@@ -141,8 +144,8 @@ curl -s -X POST localhost:3000/users -H 'Content-Type: application/json' \
 ## 7. Pruebas
 
 ```bash
-pnpm test        # unitarias + reglas de arquitectura (sin Nest, sin BD) — 180 pruebas
-pnpm test:e2e    # e2e con PostgreSQL real y migraciones reales — 35 pruebas
+pnpm test        # unitarias + reglas de arquitectura (sin Nest, sin BD) — 194 pruebas
+pnpm test:e2e    # e2e con PostgreSQL real y migraciones reales — 45 pruebas
 pnpm test:cov    # cobertura de las unitarias
 pnpm typecheck   # verificación de tipos (incluye tests)
 ```
@@ -159,14 +162,16 @@ pnpm typecheck   # verificación de tipos (incluye tests)
   Antes de ejecutarse, `test/e2e/support/global-setup.ts` fuerza `NODE_ENV=test`,
   crea `DB_NAME_TEST` si no existe, **la vacía y aplica las migraciones reales
   desde cero**. Nunca tocan la base de desarrollo. Cubren 200/201/204, 400, 404
-  y 409, la concurrencia sobre el email único, el evento entre contextos y la
-  reversibilidad (`down()`) de las migraciones.
+  y 409, la concurrencia sobre el email único, el bloqueo optimista, el evento entre
+  contextos, el endurecimiento HTTP y la reversibilidad (`down()`) de las migraciones.
 
 ## 8. Endpoints
 
-Todas las respuestas son JSON. Errores: `{ statusCode, code, message, path, timestamp }`
-(errores de dominio) o `{ statusCode: 400, code: "REQUEST_VALIDATION_FAILED", message: [...] }`
-(validación del DTO). Catálogo completo en [`docs/business-rules/error-catalog.md`](docs/business-rules/error-catalog.md).
+Todas las respuestas son JSON. Todos los errores tienen la forma
+`{ statusCode, code, message, path, timestamp }`: errores de dominio (p. ej. `TASK_NOT_FOUND`),
+de validación del DTO o del id (`REQUEST_VALIDATION_FAILED`) y del framework
+(`BAD_REQUEST` para JSON mal formado, `ROUTE_NOT_FOUND`). Si otra petición modificó el mismo
+recurso a la vez, se responde `409 *_CONCURRENT_MODIFICATION` (reintenta). Catálogo completo en [`docs/business-rules/error-catalog.md`](docs/business-rules/error-catalog.md).
 
 ### Contexto Users
 
@@ -329,6 +334,8 @@ fail-fast y estrategia de pruebas.
 | `password authentication failed` tras cambiar `DB_PASSWORD` | Postgres solo aplica las credenciales al crear el volumen: `docker compose down -v` y vuelve a levantar (borra los datos). |
 | `relation "users" does not exist` | Faltan las migraciones: `pnpm migration:run`. |
 | Los e2e fallan con `DB_NAME_TEST` | Debe estar definida en `.env` y ser distinta de `DB_NAME` (los e2e vacían esa base). |
+
+Auditoría de seguridad, bugs y checklist completo: [`docs/audit-checklist.md`](docs/audit-checklist.md).
 
 Limitaciones conocidas (detalle en [`docs/technical-debt.md`](docs/technical-debt.md)):
 no hay autenticación (el hash se guarda para un futuro login); la liberación de tareas
