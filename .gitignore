@@ -1,0 +1,18 @@
+# Dependencias y build
+node_modules/
+dist/
+coverage/
+*.tsbuildinfo
+
+# Variables de entorno: NUNCA se versionan (solo .env.example)
+.env
+.env.*
+!.env.example
+
+# Logs y SO
+*.log
+npm-debug.log*
+pnpm-debug.log*
+.DS_Store
+.idea/
+.vscode/
