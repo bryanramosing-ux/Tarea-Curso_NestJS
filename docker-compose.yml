@@ -4,7 +4,7 @@
 services:
   postgres:
     image: postgres:16-alpine
-    container_name: kanban-postgres
+    container_name: ticketing-postgres
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${DB_USER:?DB_USER is required in .env}
@@ -14,7 +14,7 @@ services:
       # Solo accesible desde esta máquina (no se expone a la red local).
       - "127.0.0.1:${DB_PORT:?DB_PORT is required in .env}:5432"
     volumes:
-      - kanban-postgres-data:/var/lib/postgresql/data
+      - ticketing-postgres-data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s
@@ -22,4 +22,4 @@ services:
       retries: 10
 
 volumes:
-  kanban-postgres-data:
+  ticketing-postgres-data:

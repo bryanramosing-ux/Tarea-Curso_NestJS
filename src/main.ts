@@ -11,7 +11,7 @@ async function bootstrap(): Promise<void> {
   const port = config.get('PORT', { infer: true });
 
   await app.listen(port);
-  Logger.log(`Kanban API listening on port ${port}`, 'Bootstrap');
+  Logger.log(`Ticketing API listening on port ${port}`, 'Bootstrap');
 }
 
 void bootstrap();

@@ -1,7 +1,7 @@
 {
-  "name": "kanban-hexagonal-nestjs",
+  "name": "ticketing-hexagonal-nestjs",
   "version": "1.0.0",
-  "description": "Tablero Kanban para una pequeña startup: NestJS + Arquitectura Hexagonal + DDD táctico + CQRS",
+  "description": "Venta de entradas para eventos: NestJS + Arquitectura Hexagonal + DDD táctico + CQRS",
   "private": true,
   "license": "UNLICENSED",
   "packageManager": "pnpm@10.28.0",

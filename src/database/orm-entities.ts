@@ -1,5 +1,6 @@
-import { TaskOrmEntity } from '../tasks/infrastructure/persistence/typeorm/task.orm-entity';
-import { UserOrmEntity } from '../users/infrastructure/persistence/typeorm/user.orm-entity';
+import { EventOrmEntity } from '../catalog/infrastructure/persistence/typeorm/event.orm-entity';
+import { TicketAllocationOrmEntity } from '../ticketing/infrastructure/persistence/typeorm/ticket-allocation.orm-entity';
+import { TicketOrmEntity } from '../ticketing/infrastructure/persistence/typeorm/ticket.orm-entity';
 
 /** Modelos de persistencia registrados (lista explícita, sin globs frágiles). */
-export const ORM_ENTITIES = [UserOrmEntity, TaskOrmEntity];
+export const ORM_ENTITIES = [EventOrmEntity, TicketAllocationOrmEntity, TicketOrmEntity];

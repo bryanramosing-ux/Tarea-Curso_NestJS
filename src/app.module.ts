@@ -4,9 +4,9 @@ import { CqrsModule } from '@nestjs/cqrs';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { buildDataSourceOptions, resolveDatabaseSettings } from './config/database.config';
 import { EnvironmentVariables, validateEnv } from './config/env.validation';
+import { CatalogModule } from './catalog/catalog.module';
 import { SharedModule } from './shared/shared.module';
-import { TasksModule } from './tasks/tasks.module';
-import { UsersModule } from './users/users.module';
+import { TicketingModule } from './ticketing/ticketing.module';
 
 @Module({
   imports: [
@@ -18,8 +18,8 @@ import { UsersModule } from './users/users.module';
     }),
     CqrsModule.forRoot(),
     SharedModule,
-    UsersModule,
-    TasksModule,
+    CatalogModule,
+    TicketingModule,
   ],
 })
 export class AppModule {}

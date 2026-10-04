@@ -1,6 +1,6 @@
 import 'reflect-metadata';
 import { plainToInstance } from 'class-transformer';
-import { IsIn, IsInt, IsNotEmpty, IsString, Max, Min, ValidateIf, validateSync } from 'class-validator';
+import { IsIn, IsInt, IsNotEmpty, IsString, Max, Min, MinLength, ValidateIf, validateSync } from 'class-validator';
 
 export const NODE_ENVIRONMENTS = ['development', 'production', 'test'] as const;
 export type NodeEnvironment = (typeof NODE_ENVIRONMENTS)[number];
@@ -39,6 +39,15 @@ export class EnvironmentVariables {
   @IsString()
   @IsNotEmpty()
   DB_NAME: string;
+
+  /**
+   * Secreto del servidor para el HMAC de los códigos de entrada (RN-012).
+   * Mínimo 32 caracteres; genera uno con:
+   *   node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+   */
+  @IsString()
+  @MinLength(32)
+  TICKET_CODE_SECRET: string;
 
   /** Solo obligatoria al ejecutar pruebas (NODE_ENV=test). */
   @ValidateIf((env: EnvironmentVariables) => env.NODE_ENV === 'test')
