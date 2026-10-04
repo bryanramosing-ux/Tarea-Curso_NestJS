@@ -16,6 +16,7 @@ ETAPA 7  Preparar la defensa ........................ 1–2 horas
 ```
 
 > Las instrucciones están pensadas para **Windows** (PowerShell). Donde Mac es distinto, verás 🍎.
+> 🐧 **¿Usas Linux?** Sigue mejor [`EMPIEZA-AQUI-LINUX.md`](EMPIEZA-AQUI-LINUX.md).
 
 ---
 

@@ -3,6 +3,7 @@
 **NestJS + Arquitectura Hexagonal + DDD táctico + CQRS**
 
 > 🚀 ¿Primera vez? Empieza por [`docs/EMPIEZA-AQUI.md`](docs/EMPIEZA-AQUI.md): de cero a la entrega, en orden.
+> 🐧 ¿Usas Linux? Sigue [`docs/EMPIEZA-AQUI-LINUX.md`](docs/EMPIEZA-AQUI-LINUX.md): instalación por terminal y pruebas con `curl`.
 >
 > 📚 ¿Quieres aprender a construirlo tú mismo? Sigue la guía [`docs/guia-paso-a-paso.md`](docs/guia-paso-a-paso.md).
 
