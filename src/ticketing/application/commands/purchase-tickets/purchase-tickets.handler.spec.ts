@@ -132,3 +132,36 @@ describe('PurchaseTicketsHandler (sin Nest, sin base de datos)', () => {
     expect(findByEvent).not.toHaveBeenCalled();
   });
 });
+
+describe('PurchaseTicketsHandler racing an event cancellation (RN-014)', () => {
+  it('refunds its own tickets and fails if the sales were closed while it was issuing them', async () => {
+    const allocations = new InMemoryTicketAllocationRepository();
+    const tickets = new InMemoryTicketRepository();
+    const catalog = new InMemoryEventCatalog();
+    catalog.add(
+      SaleableEvent.create({ id: EVENT, capacity: 3, startsAt: STARTS, unitPrice: Money.create(1000, 'USD'), onSale: true }),
+    );
+    const handler = new PurchaseTicketsHandler(
+      allocations,
+      tickets,
+      catalog,
+      new HmacTicketCodeHasher('a-very-long-server-secret-for-tests-0123456789'),
+      new InMemoryDomainEventPublisher(),
+    );
+    // La cancelación cierra la venta justo después de que la compra guarda su primera entrada.
+    const save = tickets.save.bind(tickets);
+    let cancelled = false;
+    jest.spyOn(tickets, 'save').mockImplementation(async (ticket) => {
+      await save(ticket);
+      if (!cancelled) {
+        cancelled = true;
+        const allocation = (await allocations.findByEvent(EVENT))!;
+        allocation.close();
+        await allocations.save(allocation);
+      }
+    });
+
+    await expect(handler.execute(buy(2))).rejects.toBeInstanceOf(SalesClosedError);
+    expect(tickets.all().map((ticket) => ticket.status)).toEqual(['REFUNDED', 'REFUNDED']);
+  });
+});

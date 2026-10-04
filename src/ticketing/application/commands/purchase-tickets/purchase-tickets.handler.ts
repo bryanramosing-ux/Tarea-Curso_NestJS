@@ -3,7 +3,12 @@ import { CommandHandler, ICommandHandler } from '@nestjs/cqrs';
 import { DOMAIN_EVENT_PUBLISHER, DomainEventPublisher } from '../../../../shared/domain/ports/domain-event-publisher.port';
 import { Ticket } from '../../../domain/entities/ticket';
 import { TicketAllocation } from '../../../domain/entities/ticket-allocation';
-import { EventNotAvailableForSaleError, SalesConcurrentModificationError } from '../../../domain/errors/ticketing.errors';
+import {
+  EventNotAvailableForSaleError,
+  SalesClosedError,
+  SalesConcurrentModificationError,
+  TicketConcurrentModificationError,
+} from '../../../domain/errors/ticketing.errors';
 import { EVENT_CATALOG, EventCatalog } from '../../../domain/ports/event-catalog.port';
 import { TICKET_ALLOCATION_REPOSITORY, TicketAllocationRepository } from '../../../domain/ports/ticket-allocation.repository';
 import { TICKET_CODE_HASHER, TicketCodeHasher } from '../../../domain/ports/ticket-code-hasher.port';
@@ -69,6 +74,8 @@ export class PurchaseTicketsHandler implements ICommandHandler<PurchaseTicketsCo
       issued.push({ ticket, code });
     }
 
+    await this.compensateIfSalesClosedMeanwhile(eventId, issued.map(({ ticket }) => ticket));
+
     await this.eventPublisher.publishAll([
       ...allocation.pullDomainEvents(),
       ...issued.flatMap(({ ticket }) => ticket.pullDomainEvents()),
@@ -99,6 +106,31 @@ export class PurchaseTicketsHandler implements ICommandHandler<PurchaseTicketsCo
         await backoff(attempt);
       }
     }
+  }
+
+  /**
+   * RN-014 ante una cancelación simultánea. La cancelación cierra el cupo ANTES
+   * de buscar entradas que reembolsar; la compra guarda sus entradas ANTES de
+   * releer el cupo. Así, al menos una de las dos ve a la otra: o la cancelación
+   * encuentra estas entradas, o la compra ve el cupo cerrado y reembolsa las suyas.
+   */
+  private async compensateIfSalesClosedMeanwhile(eventId: EventReference, issued: Ticket[]): Promise<void> {
+    const current = await this.allocations.findByEvent(eventId);
+    if (!current || current.status.isOpen()) {
+      return;
+    }
+    for (const ticket of issued) {
+      ticket.refund();
+      try {
+        await this.tickets.save(ticket);
+      } catch (error) {
+        // Si la cancelación ya la reembolsó en paralelo, no hay nada más que hacer.
+        if (!(error instanceof TicketConcurrentModificationError)) {
+          throw error;
+        }
+      }
+    }
+    throw new SalesClosedError(eventId.value);
   }
 
   private async openSales(eventId: EventReference): Promise<TicketAllocation> {

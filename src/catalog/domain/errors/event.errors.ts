@@ -22,7 +22,7 @@ export class InvalidVenueError extends DomainException {
 
 export class InvalidEventStartError extends DomainException {
   constructor() {
-    super('EVENT_INVALID_START', DomainErrorKind.VALIDATION, 'Event start must be a valid date and time');
+    super('EVENT_INVALID_START', DomainErrorKind.VALIDATION, 'Event start must be a valid ISO 8601 date and time with timezone (e.g. 2027-03-20T21:00:00Z)');
   }
 }
 

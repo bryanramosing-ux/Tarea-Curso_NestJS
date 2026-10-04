@@ -66,7 +66,7 @@ describe('EventStart', () => {
     expect(start.isAfter(new Date('2027-03-20T21:00:00Z'))).toBe(false);
   });
 
-  it.each(['', 'mañana', '2027-13-45'])('rejects %p', (value) => {
+  it.each(['', 'mañana', '2027-13-45', '2027-03-20T21:00:00', '2027-03-20'])('rejects %p', (value) => {
     expect(() => EventStart.create(value)).toThrow(InvalidEventStartError);
   });
 
