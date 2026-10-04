@@ -9,7 +9,7 @@ import { dirname, join, relative, resolve, sep } from 'node:path';
 
 const ROOT = resolve(__dirname, '..', '..');
 const SRC = join(ROOT, 'src');
-const CONTEXTS = ['users', 'tasks'];
+const CONTEXTS = ['catalog', 'ticketing'];
 const THIS_FILE = resolve(__filename);
 
 function walk(dir: string): string[] {
@@ -40,6 +40,23 @@ function resolveImport(file: string, specifier: string): string | null {
 function contextOf(absolutePath: string): string | null {
   const [first] = relative(SRC, absolutePath).split(sep);
   return CONTEXTS.includes(first) ? first : null;
+}
+
+/** Cuerpo (entre llaves) del método cuya firma empieza por `signature`; '' si no existe. */
+function methodBody(source: string, signature: string): string {
+  const start = source.indexOf(signature);
+  if (start === -1) {
+    return '';
+  }
+  const open = source.indexOf('{', source.indexOf(')', start));
+  let depth = 0;
+  for (let i = open; i < source.length; i++) {
+    if (source[i] === '{') depth++;
+    if (source[i] === '}' && --depth === 0) {
+      return source.slice(open + 1, i);
+    }
+  }
+  return '';
 }
 
 describe('Architecture', () => {
@@ -216,10 +233,14 @@ describe('Architecture', () => {
       );
       expect(handlers.length).toBeGreaterThanOrEqual(5);
       for (const file of handlers) {
-        const source = readFileSync(file, 'utf8');
-        const save = source.lastIndexOf('.save(');
-        const publish = source.indexOf('.publishAll(');
-        expect({ file: rel(file), saveBeforePublish: save !== -1 && publish !== -1 && save < publish }).toEqual({
+        // Se analiza el cuerpo de execute(): ahí debe haber un save() antes del
+        // publishAll() y ningún save() después (los métodos privados auxiliares
+        // pueden estar escritos más abajo en el archivo).
+        const body = methodBody(readFileSync(file, 'utf8'), 'async execute(');
+        const publish = body.indexOf('.publishAll(');
+        const saveBefore = publish !== -1 && body.slice(0, publish).includes('.save(');
+        const saveAfter = publish !== -1 && body.slice(publish).includes('.save(');
+        expect({ file: rel(file), saveBeforePublish: saveBefore && !saveAfter }).toEqual({
           file: rel(file),
           saveBeforePublish: true,
         });
