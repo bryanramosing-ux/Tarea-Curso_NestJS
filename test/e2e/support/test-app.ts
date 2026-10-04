@@ -13,13 +13,15 @@ export interface TestApp {
 export async function createTestApp(): Promise<TestApp> {
   const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
   const app = configureApp(moduleRef.createNestApplication({ logger: ['error', 'warn'] }));
-  await app.init();
+  // Escucha en un puerto efímero real: supertest reutiliza el mismo servidor
+  // (imprescindible para pruebas con muchas peticiones simultáneas).
+  await app.listen(0);
   return { app, dataSource: app.get(DataSource) };
 }
 
 /** Deja las tablas vacías entre pruebas (el esquema lo crearon las migraciones en global-setup). */
 export async function resetDatabase(dataSource: DataSource): Promise<void> {
-  await dataSource.query('TRUNCATE TABLE "tasks", "users" CASCADE');
+  await dataSource.query('TRUNCATE TABLE "tickets", "ticket_allocations", "events" CASCADE');
 }
 
 /** Espera a que se cumpla una condición producida por un manejador de eventos asíncrono. */
