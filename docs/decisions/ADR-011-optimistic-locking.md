@@ -1,37 +1,39 @@
 # ADR-011 — Bloqueo optimista con columna `version`
 
 ## Contexto
-La auditoría reprodujo una **actualización perdida** con el adaptador real: dos
-operaciones leen la misma tarea; una la libera porque su responsable fue desactivado
-(RN-013) y la otra, con su copia antigua, cambia el estado y guarda después. El
-resultado era una tarea `IN_REVIEW` asignada a un miembro inactivo: la segunda
-escritura deshacía la primera sin que nadie lo notara. Lo mismo podía duplicar
-`UserDeactivated` con dos desactivaciones simultáneas.
+Dos operaciones pueden leer el mismo agregado y guardarlo después. Sin control, la
+segunda **sobrescribe en silencio** a la primera ("actualización perdida"). En una venta de
+entradas es grave: dos compradores leen "queda 1 plaza", ambos compran y ambos guardan
+`sold = capacity` → se emiten dos entradas para una plaza. Se comprobó con PostgreSQL real:
+sin control, 30 compradores simultáneos para 5 plazas obtienen **16** entradas.
 
 ## Decisión
 - `AggregateRoot` lleva una `version` (0 = nuevo; ≥ 1 = almacenado, validado en `fromPrimitives`).
-- Migración `AddOptimisticLockingVersion` añade `version integer NOT NULL DEFAULT 1` con `CHECK >= 1`.
+- Todas las tablas tienen `version integer NOT NULL` con `CHECK >= 1`.
 - Los adaptadores insertan los agregados nuevos y actualizan los existentes con
   `WHERE id = ? AND version = ?`. Si no se actualiza ninguna fila, lanzan
-  `USER_CONCURRENT_MODIFICATION` / `TASK_CONCURRENT_MODIFICATION` (CONFLICT → 409).
-- `ReleaseMemberTasksHandler`, que lo dispara un evento y no puede devolver un 409 a
-  nadie, relee y reintenta hasta `RELEASE_MAX_ATTEMPTS` veces (omite la tarea si ya
-  no pertenece al miembro o ya está DONE).
+  `*_CONCURRENT_MODIFICATION` (CONFLICT → 409). Tras guardar, llaman a `markAsPersisted()`.
+- Quien no puede devolver un 409 a un humano reintenta releyendo:
+  - `PurchaseTicketsHandler` (hasta 10 intentos con espera aleatoria, ADR-012);
+  - `CheckInTicketHandler` (un reintento: el segundo lector recibe `TICKET_ALREADY_USED`);
+  - `CloseEventSalesHandler` (disparado por un evento: relee y omite lo ya usado/reembolsado).
 
 ## Por qué
-- Las invariantes se comprueban sobre el estado leído; sin control de versión, una
-  decisión tomada sobre un estado obsoleto se puede guardar igualmente.
-- El bloqueo optimista no mantiene bloqueos abiertos (adecuado para una API HTTP con
-  pocas colisiones) y el conflicto llega al cliente como un 409 con código estable.
-- `@VersionColumn` de TypeORM solo incrementa el número: no comprueba la versión
-  esperada al guardar, por eso la condición se escribe explícitamente en el `UPDATE`.
+- Las invariantes se comprueban sobre el estado leído; sin versión, una decisión tomada
+  sobre un estado obsoleto se guardaría igualmente.
+- No mantiene bloqueos abiertos (adecuado para HTTP con colisiones puntuales) y el
+  conflicto llega como un 409 con código estable.
+- `@VersionColumn` de TypeORM solo incrementa el número: no comprueba la versión esperada
+  al guardar, por eso la condición se escribe explícitamente en el `UPDATE`.
 
 ## Consecuencias
-- Un cliente puede recibir 409 `*_CONCURRENT_MODIFICATION` y debe reintentar tras releer.
+- Con muchísima contención, una compra puede agotar los reintentos y recibir
+  `TICKET_SALES_CONCURRENT_MODIFICATION`; el cliente puede reintentar.
 - La versión no se expone en las vistas (no hay `If-Match`/`ETag` todavía).
-- Queda un caso residual distinto (asignación ↔ desactivación en dos agregados): TD-012.
 
 ## Alternativas descartadas
-- Bloqueo pesimista (`SELECT … FOR UPDATE`): exige transacciones que abarquen el caso
-  de uso entero y un puerto de *unit of work*; excesivo para esta escala.
+- Bloqueo pesimista (`SELECT … FOR UPDATE`): exige transacciones que abarquen el caso de
+  uso entero y un puerto de *unit of work*; serializa todas las compras de un evento.
+- `UPDATE … SET sold = sold + n WHERE sold + n <= capacity` directamente en SQL: es
+  correcto y rápido, pero saca la regla RN-009 del dominio y la esconde en el adaptador.
 - "El último gana": es justamente el bug.

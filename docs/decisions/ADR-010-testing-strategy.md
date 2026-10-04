@@ -20,8 +20,10 @@ completo funciona con la base real (e2e) y que la arquitectura no se degrada.
 - Las pruebas de arquitectura convierten la checklist de la rúbrica en algo ejecutable
   y se validaron con mutaciones (introducir un import de `@nestjs` en el dominio, un
   `process.env` fuera de config o un `it.skip` las hace fallar).
-- Solo una prueba con la base real puede demostrar unicidad concurrente, CHECK/FK y
-  migraciones reversibles.
+- Solo una prueba con la base real puede demostrar la ausencia de sobreventa con compras
+  simultáneas, la unicidad concurrente, los CHECK/FK y las migraciones reversibles.
+- Las pruebas de concurrencia se validaron con controles negativos: sin bloqueo optimista
+  la e2e de 30 compradores vende 16 entradas para 5 plazas y falla.
 
 ## Consecuencias
 - Las e2e requieren Docker levantado.

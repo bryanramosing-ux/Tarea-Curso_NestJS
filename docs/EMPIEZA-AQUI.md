@@ -22,9 +22,9 @@ ETAPA 7  Preparar la defensa ........................ 1–2 horas
 ## ETAPA 1 — Entender qué tienes (10 min)
 
 - [ ] Lee esto:
-  - **Qué es**: una API REST de un tablero Kanban para una startup. Hay **usuarios**
-    (miembros del equipo) y **tareas** que se asignan y se mueven por columnas
-    `TODO → IN_PROGRESS → IN_REVIEW → DONE`.
+  - **Qué es**: una API REST de **venta de entradas para eventos**. Hay un **catálogo**
+    de eventos (conciertos, obras…) y una **venta** que nunca sobrevende el aforo, valida
+    cada entrada en la puerta una sola vez y reembolsa si el evento se cancela.
   - **Cómo está hecho**: NestJS + TypeScript con arquitectura hexagonal, DDD y CQRS,
     PostgreSQL en Docker, migraciones, pruebas unitarias y e2e.
   - **Dónde está**: `https://github.com/bryanramosing-ux/Tarea-Curso_NestJS`, rama
@@ -38,7 +38,7 @@ ETAPA 7  Preparar la defensa ........................ 1–2 horas
 | `docs/guia-paso-a-paso.md` | Aprender a construirlo tú mismo, fase por fase |
 | `docs/rubric-self-assessment.md` | Cómo cumple cada criterio de la rúbrica |
 | `docs/audit-checklist.md` | Auditoría de seguridad y bugs |
-| `docs/business-rules/business-rules.md` | Las 14 reglas de negocio (RN-001…RN-014) |
+| `docs/business-rules/business-rules.md` | Las 15 reglas de negocio (RN-001…RN-015) |
 | `docs/decisions/` | Por qué se tomó cada decisión (ADRs) |
 
 ---
@@ -117,19 +117,19 @@ Con **Docker Desktop abierto**:
 ```powershell
 docker compose up -d --wait
 ```
-- [ ] Dice `Container kanban-postgres Healthy`.
+- [ ] Dice `Container ticketing-postgres Healthy`.
 
 ### 3.5 Crear las tablas
 ```powershell
 pnpm migration:run
 ```
-- [ ] Aparecen **3** mensajes `... has been executed successfully`.
+- [ ] Aparecen **2** mensajes `... has been executed successfully`.
 
 ### 3.6 Arrancar la API
 ```powershell
 pnpm start:dev
 ```
-- [ ] Ves `Kanban API listening on port 3000`. **Deja esta terminal abierta.**
+- [ ] Ves `Ticketing API listening on port 3000`. **Deja esta terminal abierta.**
 
 ---
 
@@ -141,25 +141,27 @@ Abre **otra** terminal en la carpeta del proyecto (en VS Code: *Terminal → Nue
 pnpm test
 pnpm test:e2e
 ```
-- [ ] `pnpm test` → `Tests: 194 passed`
-- [ ] `pnpm test:e2e` → `Tests: 45 passed`
+- [ ] `pnpm test` → `Tests: 189 passed`
+- [ ] `pnpm test:e2e` → `Tests: 44 passed`
 
 ### 4.2 Probar a mano (Thunder Client)
 En VS Code → icono del rayo → **New Request**. Para los que tienen cuerpo: pestaña **Body → JSON**.
 
 | # | Método y URL | Cuerpo | Debe responder |
 |---|---|---|---|
-| 1 | `POST http://localhost:3000/users` | `{"name":"Ana","email":"ana@startup.io","password":"secret123"}` | **201** `{id}` → copia el id (`ID_ANA`) |
-| 2 | `GET http://localhost:3000/users/ID_ANA` | — | **200**, sin contraseña |
-| 3 | Repite el 1 | igual | **409** email repetido |
-| 4 | `POST http://localhost:3000/users` | `{"name":"Ana","email":"b@startup.io","password":"abcdefgh"}` | **400** contraseña débil |
-| 5 | `POST http://localhost:3000/tasks` | `{"title":"Preparar demo","priority":"HIGH"}` | **201** → copia el id (`ID_TAREA`) |
-| 6 | `PATCH http://localhost:3000/tasks/ID_TAREA/status` | `{"status":"IN_PROGRESS"}` | **409** no tiene responsable |
-| 7 | `PATCH http://localhost:3000/tasks/ID_TAREA/assignee` | `{"assigneeId":"ID_ANA"}` | **204** |
-| 8 | Repite el 6 | igual | **204** |
-| 9 | `PATCH http://localhost:3000/tasks/ID_TAREA/status` | `{"status":"DONE"}` | **409** no se puede saltar columnas |
-| 10 | `POST http://localhost:3000/users/ID_ANA/deactivate` | — | **204** |
-| 11 | `GET http://localhost:3000/tasks/ID_TAREA` | — | **200**, volvió a `TODO` sin responsable |
+| 1 | `POST http://localhost:3000/events` | `{"name":"Rock en el Parque","venue":"Estadio Nacional","startsAt":"2027-03-20T21:00:00Z","capacity":3,"priceCents":4500,"currency":"PEN"}` | **201** `{id}` → copia el id (`ID_EVENTO`) |
+| 2 | Repite el 1 cambiando `"venue":"estadio nacional"` | — | **409** `EVENT_SLOT_TAKEN` (mismo recinto, misma hora) |
+| 3 | `GET http://localhost:3000/tickets/availability/ID_EVENTO` | — | **200** `available: 3` |
+| 4 | `POST http://localhost:3000/tickets` | `{"eventId":"ID_EVENTO","quantity":2,"holderName":"Ana Pérez","holderEmail":"ana@mail.com"}` | **201** con 2 entradas y `total` 9000. Copia el `id` y el `code` de la primera (`ENTRADA_1`, `CODIGO_1`) y el `id` de la segunda (`ENTRADA_2`) |
+| 5 | Repite el 4 | igual | **409** `TICKET_NOT_ENOUGH_AVAILABLE` (solo queda 1) |
+| 6 | Repite el 4 con `"quantity":11` | — | **400** `TICKET_INVALID_QUANTITY` |
+| 7 | `GET http://localhost:3000/tickets/ENTRADA_1` | — | **200**, **sin** el código |
+| 8 | `POST http://localhost:3000/tickets/check-in` | `{"code":"CODIGO_1"}` | **200** (Ana entra) |
+| 9 | Repite el 8 | igual | **409** `TICKET_ALREADY_USED` |
+| 10 | `POST http://localhost:3000/events/ID_EVENTO/cancel` | — | **204** |
+| 11 | `GET http://localhost:3000/tickets/ENTRADA_2` | — | **200** `status: REFUNDED` (la usada, `ENTRADA_1`, sigue `USED`) |
+
+> La fecha del paso 1 debe ser **futura** y llevar zona horaria (`Z` al final).
 
 - [ ] Las 11 respuestas coinciden.
 
@@ -174,16 +176,17 @@ Tienes dos caminos. **Recomendado: el B**, porque construir es la mejor forma de
 ### Camino A — Leer el código en orden (2–3 días)
 Abre los archivos en este orden (de adentro hacia afuera del hexágono):
 
-1. `src/shared/domain/` → la base: errores, eventos, agregado.
-2. `src/users/domain/value-objects/email.ts` → qué es un value object.
-3. `src/users/domain/entities/user.ts` → entidad rica.
-4. `src/users/domain/ports/` → puertos.
-5. `src/users/application/commands/create-user/` → un caso de uso CQRS.
-6. `src/users/infrastructure/persistence/` → adaptadores (memoria y PostgreSQL) + mapper.
-7. `src/users/infrastructure/http/users.controller.ts` → controlador delgado.
-8. `src/users/users.module.ts` → dónde se conectan puertos y adaptadores.
-9. Repite 2–8 con `src/tasks/` (fíjate en `task-status.ts` y `task.ts`).
-10. `src/tasks/infrastructure/adapters/` y `event-handlers/` → comunicación entre contextos.
+1. `src/shared/domain/` → la base: errores, eventos, agregado con versión.
+2. `src/catalog/domain/value-objects/venue.ts` y `ticket-price.ts` → qué es un value object.
+3. `src/catalog/domain/entities/event.ts` → agregado rico (`schedule`, `cancel`).
+4. `src/catalog/domain/ports/` → puertos.
+5. `src/catalog/application/commands/schedule-event/` → un caso de uso CQRS.
+6. `src/catalog/infrastructure/persistence/` → adaptadores (memoria y PostgreSQL) + mapper.
+7. `src/catalog/infrastructure/http/events.controller.ts` → controlador delgado.
+8. `src/catalog/catalog.module.ts` → dónde se conectan puertos y adaptadores.
+9. Repite 2–8 con `src/ticketing/`. Lo más importante: `ticket-allocation.ts` (el cupo
+   que impide sobrevender) y `purchase-tickets.handler.ts` (reintentos y compensación).
+10. `src/ticketing/infrastructure/adapters/` y `event-handlers/` → comunicación entre contextos.
 11. `src/database/migrations/` y `src/config/`.
 12. `test/` → e2e y la prueba de arquitectura.
 
@@ -196,7 +199,7 @@ En cada archivo pregúntate: *¿en qué capa está? ¿de qué depende? ¿qué re
 - [ ] Lee `docs/business-rules/business-rules.md` y localiza en el código 3 reglas (busca `RN-009`, por ejemplo: `Ctrl+Shift+F` en VS Code).
 - [ ] Lee 3 ADRs de `docs/decisions/` (empieza por ADR-001, ADR-004 y ADR-007).
 - [ ] Haz el experimento: añade `import { Injectable } from '@nestjs/common';` al inicio de
-  `src/users/domain/value-objects/email.ts`, ejecuta `pnpm test`, mira cómo **falla** la
+  `src/ticketing/domain/value-objects/quantity.ts`, ejecuta `pnpm test`, mira cómo **falla** la
   prueba de arquitectura y luego **quita** la línea.
 
 ---
@@ -263,15 +266,15 @@ grep -rn "@nestjs\|typeorm\|class-validator" src/*/domain/
 ## ETAPA 7 — Preparar la defensa
 
 ### 7.1 Ensaya las preguntas
-- [ ] Responde **en voz alta** las 13 preguntas de la Fase 18 de `docs/guia-paso-a-paso.md`.
+- [ ] Responde **en voz alta** las 14 preguntas de la Fase 18 de `docs/guia-paso-a-paso.md`.
 
 ### 7.2 Guion de demostración (5 minutos)
-1. **(30 s)** "Es un tablero Kanban con dos contextos: Users y Tasks."
-2. **(1 min)** Muestra las carpetas `src/users/domain`, `application`, `infrastructure` y explica la regla de dependencias.
-3. **(1 min)** Abre `task-status.ts` (tabla de transiciones) y `task.ts` (`changeStatus`): "las reglas viven en el dominio".
-4. **(1 min)** Demo en vivo con Thunder Client: pasos 5→6→7→8→9 de la Etapa 4 (409 sin responsable, 204, 409 al saltar columnas).
-5. **(1 min)** Demo del evento entre contextos: pasos 10 y 11 (desactivar usuario → la tarea vuelve a TODO).
-6. **(30 s)** Ejecuta `pnpm test` y muestra la prueba de arquitectura en verde.
+1. **(30 s)** "Es una venta de entradas con dos contextos: Catálogo y Venta. La regla clave: nunca sobrevender."
+2. **(1 min)** Muestra las carpetas `src/ticketing/domain`, `application`, `infrastructure` y explica la regla de dependencias.
+3. **(1 min)** Abre `ticket-allocation.ts` (`sell`): "el cupo es un agregado y protege el aforo; su versión impide que dos compras simultáneas se pisen".
+4. **(1 min)** Demo en vivo con Thunder Client: pasos 1→4→5→8→9 de la Etapa 4 (compra, agotado, check-in, uso doble).
+5. **(1 min)** Demo del evento entre contextos: pasos 10 y 11 (cancelar evento → la entrada no usada queda REFUNDED).
+6. **(30 s)** Ejecuta `pnpm test:e2e` y señala la prueba "30 simultaneous buyers for 5 seats".
 
 - [ ] Ensayaste la demo al menos una vez de principio a fin.
 
@@ -290,7 +293,9 @@ grep -rn "@nestjs\|typeorm\|class-validator" src/*/domain/
 | `port is already allocated` (5432) | Otro PostgreSQL usa el puerto: en `.env` cambia `DB_PORT=5433` y repite 3.4–3.6 |
 | `EADDRINUSE :::3000` | Otro programa usa el 3000: en `.env` pon `PORT=3001` y usa ese puerto en las URLs |
 | `ECONNREFUSED` | La base no está levantada: Etapa 3.4 |
-| `relation "users" does not exist` | Faltan migraciones: Etapa 3.5 |
+| `relation "events" does not exist` | Faltan migraciones: Etapa 3.5 |
+| `400 EVENT_INVALID_START` o `EVENT_START_IN_PAST` | La fecha debe ser futura y terminar en `Z` (o `-05:00`) |
+| La app no arranca y menciona `TICKET_CODE_SECRET` | Tu `.env` es antiguo: vuelve a copiar `.env.example` |
 | `pnpm` bloqueado en PowerShell | Etapa 2.3 (comando `Set-ExecutionPolicy`) |
 | `password authentication failed` | Cambiaste la contraseña del `.env` después de crear la base: `docker compose down -v` y repite 3.4–3.5 (borra los datos) |
 | `409 ..._CONCURRENT_MODIFICATION` | Dos peticiones cambiaron lo mismo a la vez: vuelve a enviar la tuya |

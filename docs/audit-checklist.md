@@ -1,110 +1,102 @@
 # Checklist de auditoría: vulnerabilidades, bugs y errores
 
-Fecha de la auditoría: 2026-10-02 · Entorno: Linux, Node 22.22, pnpm 10.28, PostgreSQL 16 (Docker).
+Fecha: 2026-10-04 · Dominio: **venta de entradas para eventos** · Entorno: Linux, Node 22.22,
+pnpm 10.28, PostgreSQL 16 (Docker).
 
-Leyenda: ✅ verificado con evidencia · 🔧 fallo encontrado **y corregido** en esta auditoría ·
-⚠️ limitación conocida, documentada y no corregida · ❌ falla (ninguno al cierre).
+Leyenda: ✅ verificado con evidencia · 🔧 fallo encontrado **y corregido** · ⚠️ limitación
+conocida, documentada y no corregida · ❌ falla (ninguno al cierre).
 
 ## Resumen
 
 | Área | Resultado |
 |---|---|
-| Vulnerabilidades en dependencias (`pnpm audit`, 624 paquetes) | ✅ 0 (crítica/alta/media/baja) |
+| Vulnerabilidades en dependencias de producción (`pnpm audit --prod`) | ✅ 0 |
+| Vulnerabilidades en dependencias de desarrollo (`pnpm audit`) | ⚠️ 1 *high* en `braces` (solo Jest, sin versión corregida publicada): TD-014 |
 | Compilación (`pnpm typecheck`, `pnpm build`) | ✅ sin errores |
-| Pruebas unitarias + arquitectura (`pnpm test`) | ✅ 194/194 |
-| Pruebas e2e con PostgreSQL real (`pnpm test:e2e`) | ✅ 45/45 |
-| Bugs encontrados | 🔧 1 grave (actualización perdida por concurrencia), corregido y con prueba de regresión |
-| Debilidades de seguridad encontradas | 🔧 3 corregidas (cabeceras/`X-Powered-By`, BD expuesta a la red, errores sin formato uniforme) |
-| Limitaciones que siguen abiertas | ⚠️ 4 nuevas (TD-012…TD-014 y rate limiting); detalle en [`technical-debt.md`](technical-debt.md) |
+| Pruebas unitarias + arquitectura (`pnpm test`) | ✅ 189/189 |
+| Pruebas e2e con PostgreSQL real (`pnpm test:e2e`) | ✅ 44/44 (3 ejecuciones seguidas) |
+| Sobreventa con compras simultáneas | ✅ 30 compradores / 5 plazas → exactamente 5 entradas |
+| Bugs encontrados durante la migración de dominio | 🔧 3 corregidos con prueba de regresión |
 
 ## Hallazgos
 
 | # | Severidad | Hallazgo | Cómo se encontró | Estado |
 |---|---|---|---|---|
-| H-1 | **Alta** (bug de integridad) | **Actualización perdida**: dos operaciones sobre la misma tarea se sobrescribían. Se reprodujo con el repositorio real: tras desactivar a un miembro y liberar su tarea, una petición concurrente con una copia antigua la dejaba `IN_REVIEW` **asignada al miembro inactivo** (rompe RN-010/RN-013). Mismo problema en `User` (doble `UserDeactivated`). | Reproducción determinista contra PostgreSQL | 🔧 Bloqueo optimista con columna `version` (ADR-011), migración `AddOptimisticLockingVersion`, error 409 `*_CONCURRENT_MODIFICATION`, reintento en la liberación de tareas. Regresión: `test/e2e/concurrency.e2e-spec.ts`. **Control negativo**: al restaurar el código anterior, la prueba falla. |
-| H-2 | Media | La base de datos se publicaba en `0.0.0.0:5432`: cualquier equipo de la red local podía intentar conectarse con la contraseña de ejemplo. | Revisión de `docker-compose.yml` | 🔧 Publicada solo en `127.0.0.1` (verificado con `docker port`). |
-| H-3 | Baja | Cabecera `X-Powered-By: Express` (revela la tecnología) y sin cabeceras de seguridad (`nosniff`, CSP, frameguard). | Inspección de respuestas con `curl -i` | 🔧 `helmet` 8.3.0. Prueba: `http-security.e2e-spec.ts`. |
-| H-4 | Baja (consistencia) | Los errores del framework (JSON mal formado, ruta inexistente, id no UUID) no tenían `code` ni la forma `{ statusCode, code, message, path, timestamp }`. | Pruebas de entradas hostiles | 🔧 `HttpExceptionFilter` y `parseIdPipe()`. Los errores de dominio siguen traduciéndose solo en `DomainExceptionFilter`. |
-| H-5 | Baja | Carrera residual entre asignar una tarea y desactivar a su responsable (dos agregados distintos; ventana de milisegundos). | Análisis del flujo | ⚠️ TD-012 |
-| H-6 | Baja | Una fila corrupta (editada a mano en la BD) responde 400 en vez de 500. | Revisión de `fromPrimitives` | ⚠️ TD-013 |
-| H-7 | Informativa | El 413 (cuerpo > 100 kB) se responde bien pero Nest lo registra como `ERROR`. | Log de la app | ⚠️ TD-014 |
-| H-8 | Media si se expone a Internet | Sin rate limiting: `POST /users` es costoso a propósito (scrypt). | Revisión | ⚠️ TD-007 (no se añadió para no exigir nuevas variables en tu `.env`) |
+| H-1 | **Crítica** (si faltara el bloqueo) | **Sobreventa** con compras simultáneas. Sin bloqueo optimista, 30 compradores para 5 plazas obtienen 16 entradas. | Control negativo contra PostgreSQL real | ✅ Prevenido por diseño: cupo como agregado (ADR-012) + bloqueo optimista (ADR-011) + `CHECK sold <= capacity`. Regresión: `concurrency.e2e-spec.ts`. |
+| H-2 | Media (experiencia) | Con 30 compras simultáneas, 25 recibían "conflicto técnico, reintenta" en vez de "agotado": 3 reintentos no bastaban. | Sondeo con 30 compras reales | 🔧 Hasta 10 reintentos con espera aleatoria (*jitter*): ahora las 25 reciben `TICKET_NOT_ENOUGH_AVAILABLE` (3 ejecuciones). |
+| H-3 | Media (integridad) | **Carrera compra ↔ cancelación**: si el reembolso buscaba entradas antes de que una compra en curso guardara las suyas, quedaban entradas válidas de un evento cancelado. | Revisión del flujo | 🔧 La compra relee el cupo tras emitir y, si la venta se cerró, reembolsa sus entradas y responde `TICKET_SALES_CLOSED`. Prueba `racing an event cancellation` (falla si se quita la compensación). |
+| H-4 | Media (correctitud) | Una fecha sin zona horaria (`2027-03-20T21:00:00`) se interpretaba con la hora local del servidor: el mismo dato daba instantes distintos según dónde corriera la API. | Revisión de `EventStart` | 🔧 Se exige `Z` o `±HH:MM` → 400 `EVENT_INVALID_START`. |
+| H-5 | Baja (herramienta de prueba) | Con 30 peticiones simultáneas, supertest abría un servidor temporal por petición → `ECONNRESET`. | Primera ejecución de la e2e de concurrencia | 🔧 La app de pruebas escucha en un puerto efímero real (`app.listen(0)`). |
+| H-6 | Informativa | `braces` (GHSA-vfj7-8cjw-p6xm) en dependencias de Jest; sin parche publicado. | `pnpm audit` | ⚠️ TD-014: no llega a producción (`pnpm audit --prod` = 0). |
+| H-7 | Media si se expone a Internet | Sin autenticación ni rate limiting. | Revisión | ⚠️ TD-004, TD-007 |
 
 ## Checklist detallado
 
 ### 1. Dependencias y cadena de suministro
-- [x] ✅ `pnpm audit`: 0 vulnerabilidades en 624 dependencias (incluido `helmet` añadido).
-- [x] ✅ Versiones exactas en `package.json` y `pnpm-lock.yaml` versionado (`pnpm install --frozen-lockfile` reproducible).
-- [x] ✅ Sin dependencias nativas ni scripts de instalación (scrypt nativo de Node en lugar de `bcrypt`).
-- [x] ✅ Se usan versiones mayores estables (Nest 11, TypeORM 0.3, TS 5.9, Jest 29) en lugar de las recién publicadas.
+- [x] ✅ `pnpm audit --prod`: 0 vulnerabilidades.
+- [x] ⚠️ `pnpm audit`: 1 *high* en `braces`, solo en desarrollo, sin versión corregida (TD-014).
+- [x] ✅ Versiones exactas en `package.json`; `pnpm-lock.yaml` versionado (`--frozen-lockfile` reproducible).
+- [x] ✅ Sin dependencias nativas (HMAC y azar con `node:crypto`).
 
 ### 2. Secretos y configuración
-- [x] ✅ `.env` **nunca** se ha versionado (revisado en todo el historial: `git log --all`).
-- [x] ✅ `.env.example` solo con valores de ejemplo; búsqueda de contraseñas/tokens literales en el código: ninguno.
-- [x] ✅ Sin `.env` la app y el CLI fallan al arrancar con un mensaje que nombra la variable, **no su valor** (probado).
+- [x] ✅ `.env` nunca versionado (`git log --all`); `.env.example` con valores de ejemplo.
+- [x] ✅ `TICKET_CODE_SECRET` obligatorio (≥ 32 caracteres); sin él la app no arranca.
+- [x] ✅ Mensajes de configuración nombran la variable, **no su valor** (prueba).
 - [x] ✅ `process.env` solo en `src/config/` (regla automática).
-- [x] ✅ Las e2e se niegan a correr si `DB_NAME_TEST` coincide con `DB_NAME`.
-- [x] 🔧 PostgreSQL solo escucha en `127.0.0.1` (H-2).
+- [x] ✅ PostgreSQL solo en `127.0.0.1`.
 
-### 3. Contraseñas y datos sensibles
-- [x] ✅ Hash scrypt con sal aleatoria; en la BD solo hay `scrypt$…` (verificado leyendo la fila).
-- [x] ✅ Ninguna respuesta contiene `password`/`hash` (unitarias y e2e).
-- [x] ✅ Errores de validación sin eco de valores (la contraseña rechazada no aparece en la respuesta).
-- [x] ✅ `PlainPassword`/`PasswordHash` se serializan como `[REDACTED]`; TypeORM con `logging: false`.
-- [x] ✅ Los eventos no transportan credenciales.
+### 3. Códigos de entrada (credencial)
+- [x] ✅ Generados con CSPRNG, ~59 bits, alfabeto sin ambigüedades (200 códigos únicos en prueba).
+- [x] ✅ En la base solo hay HMAC-SHA256; búsqueda del código en todas las columnas de `tickets` = 0 (e2e).
+- [x] ✅ Ninguna vista, evento ni error contiene el código; `TicketCode` → `[REDACTED]`.
+- [x] ✅ Un código no puede usarse dos veces, ni siquiera con dos lectores a la vez (prueba unitaria de la carrera).
 
 ### 4. Entradas hostiles (probadas contra la API en ejecución)
 | Prueba | Resultado |
 |---|---|
 | JSON mal formado | ✅ 400 `BAD_REQUEST` |
-| Tipos incorrectos (`"name": 123`, arrays) | ✅ 400 `REQUEST_VALIDATION_FAILED` |
-| Propiedades no permitidas (`"rol":"admin"`) | ✅ 400 `property rol should not exist` |
-| `__proto__` / `constructor` en el cuerpo | ✅ descartadas; **sin contaminación de prototipos** (verificado en proceso) |
-| Inyección SQL en email, título y filtros | ✅ rechazada por el dominio o guardada como texto literal (consultas parametrizadas) |
-| Query anidada `?status[foo]=bar` y arrays `?status=A&status=B` | ✅ 400 |
-| Cuerpo de 2 MB | ✅ 413 |
-| `Content-Type: text/plain` | ✅ 400 |
-| `<script>` en el título | ✅ se guarda como texto; respuesta `application/json` con `nosniff` (sin XSS en la API) |
-| UUID nulo / en mayúsculas | ✅ 400 / normalizado y 404 |
+| Tipos incorrectos (`capacity: "5"`, `priceCents: 10.5`, `quantity: "2"`, `code: [...]`) | ✅ 400 `REQUEST_VALIDATION_FAILED` |
+| Propiedades no permitidas (`organizer`, `priceCents` en la compra) | ✅ 400 — el cliente **no puede fijar el precio** |
+| `__proto__` con `quantity: 9` en la compra | ✅ ignorado: se vende 1 entrada, sin contaminación de prototipos |
+| Inyección SQL en nombre, filtros y código | ✅ texto literal o 400 (consultas parametrizadas) |
+| Fechas imposibles (`2027-02-30`) o sin zona | ✅ 400 |
+| Cantidades negativas, 0 u 11 | ✅ 400 `TICKET_INVALID_QUANTITY` |
+| Aforo `1e12`, precio negativo, moneda `BTC` | ✅ 400 |
+| Cuerpo > 100 kB | ✅ 413 |
 | Ruta o método inexistente | ✅ 404 `ROUTE_NOT_FOUND` |
-| ReDoS en la expresión del email | ✅ la longitud (≤ 254) se comprueba antes de la expresión regular |
+| Cabeceras | ✅ sin `X-Powered-By`; `nosniff`, CSP (helmet) |
 
 ### 5. Bugs y lógica de negocio
-- [x] 🔧 Actualizaciones concurrentes (H-1): bloqueo optimista + reintento en RN-013.
-- [x] ✅ Unicidad del email ante 3 registros simultáneos: 1×201 y 2×409 (restricción `UNIQUE`).
-- [x] ✅ Matriz de transiciones Kanban probada: las 12 combinaciones entre estados distintos + moverse al mismo estado.
-- [x] ✅ Las `CHECK`/FK de la BD rechazan estados inválidos escritos fuera de la app.
-- [x] ✅ Evento entre contextos: la tarea vuelve a `TODO` y la tarea `DONE` conserva su responsable.
-- [x] ⚠️ Carrera asignación ↔ desactivación (H-5, TD-012).
+- [x] ✅ Nunca se sobrevende (dominio + versión + `CHECK`), con 30 compras simultáneas.
+- [x] ✅ Recinto + hora único con 3 programaciones simultáneas: 1×201 y 2×409.
+- [x] 🔧 Carrera compra ↔ cancelación compensada (H-3).
+- [x] 🔧 Zona horaria obligatoria (H-4).
+- [x] ✅ Cancelar reembolsa las no usadas y conserva las usadas; una entrada reembolsada no entra.
+- [x] ✅ Los `CHECK`/FK/UNIQUE rechazan escrituras inválidas hechas fuera de la app.
 
-### 6. Errores y respuestas HTTP
-- [x] ✅ Ningún error de negocio produce 500 (switch exhaustivo en el filtro).
-- [x] 🔧 Todas las respuestas de error comparten la forma `{ statusCode, code, message, path, timestamp }` (H-4).
-- [x] ✅ Catálogo actualizado en [`business-rules/error-catalog.md`](business-rules/error-catalog.md).
+### 6. Arquitectura (faltas graves de la rúbrica)
+- [x] ✅ Sin imports de NestJS/TypeORM/class-validator en `domain/`.
+- [x] ✅ Ningún dominio importa otro contexto (comprobado también con mutación).
+- [x] ✅ Controladores solo con buses; eventos publicados después de persistir (regla que analiza el cuerpo de `execute()`, comprobada con mutación).
+- [x] ✅ Sin `@Entity` fuera de `*.orm-entity.ts`; `synchronize: false`; ningún test con `skip`/`only`.
 
-### 7. Arquitectura (faltas graves de la rúbrica)
-- [x] ✅ Sin imports de NestJS/TypeORM/class-validator en `domain/` (incluido el nuevo `AggregateRoot`).
-- [x] ✅ Ningún dominio importa otro contexto; controladores solo usan los buses.
-- [x] ✅ Eventos publicados después de persistir (la regla automática detectó un refactor que la ocultaba; se reestructuró el handler en lugar de relajar la regla).
-- [x] ✅ Sin `@Entity` fuera de `*.orm-entity.ts`; `synchronize: false`.
-- [x] ✅ Ningún test con `skip`/`only`.
+### 7. Pruebas: que sean reales
+- [x] ✅ Control negativo del bloqueo optimista: sin él, 16 entradas para 5 plazas → la e2e falla.
+- [x] ✅ Control negativo de la compensación compra ↔ cancelación → la prueba falla.
+- [x] ✅ Mutaciones de arquitectura (`save` después de publicar; import entre contextos) → detectadas.
+- [x] ✅ Las pruebas de concurrencia comprueban filas y contadores en la base, no solo códigos HTTP.
 
-### 8. Pruebas: que sean reales
-- [x] ✅ Control negativo del matcher de errores (un caso que debía fallar, falló).
-- [x] ✅ Mutaciones de arquitectura (4 violaciones inyectadas → 4 detectadas).
-- [x] ✅ Control negativo del bloqueo optimista (se restauró el código anterior → la prueba e2e falla).
-- [x] ✅ Las 8 pruebas que cambiaron con la auditoría se ajustaron por un cambio **intencionado** del contrato (una fila almacenada siempre tiene `version ≥ 1`) y se añadieron pruebas que verifican ese contrato.
+### 8. Migraciones y base de datos
+- [x] ✅ 2 migraciones con `up()`/`down()`; revertidas y reaplicadas (CLI y e2e).
+- [x] ✅ Índice único funcional `lower(venue)`, PK del cupo, `CHECK sold <= capacity`, `UNIQUE code_hash`, FKs.
 
-### 9. Migraciones y base de datos
-- [x] ✅ 3 migraciones con `up()`/`down()`; la e2e revierte las tres y las reaplica.
-- [x] ✅ Aplicadas sobre una base existente con datos (desarrollo) sin pérdida (`DEFAULT 1`).
-- [x] ✅ Instalación desde cero en un clon limpio tras la auditoría: 3 migraciones, 194/194 unitarias, 45/45 e2e, API compilada responde 201.
-
-## Qué tienes que hacer tú si ya tenías el proyecto
+## Qué tienes que hacer si venías de la versión Kanban
 ```bash
 git pull
-pnpm install                    # instala helmet
-docker compose up -d --wait     # recrea el contenedor ligado a 127.0.0.1 (conserva los datos)
-pnpm migration:run              # aplica AddOptimisticLockingVersion
+pnpm install
+docker compose down -v          # borra la base antigua (otro esquema)
+cp .env.example .env            # hay variables nuevas (TICKET_CODE_SECRET) y otros nombres
+docker compose up -d --wait
+pnpm migration:run
 pnpm test && pnpm test:e2e
 ```

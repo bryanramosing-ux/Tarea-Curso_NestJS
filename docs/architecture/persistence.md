@@ -3,89 +3,94 @@
 ## Principios
 
 - **PostgreSQL 16** (Docker Compose) + **TypeORM 0.3**.
-- `synchronize: false` en **todos** los entornos (`src/config/database.config.ts`).
-  El esquema sale exclusivamente de migraciones versionadas con `up()` y `down()`.
-- **Una sola definición de conexión** (`buildDataSourceOptions`) usada por la app
-  (`TypeOrmModule.forRootAsync`) y por el CLI (`src/config/typeorm.data-source.ts`),
-  ambas alimentadas por la misma validación de entorno.
-- Entidades y migraciones se registran en **listas explícitas**
-  (`src/database/orm-entities.ts`, `src/database/migrations/index.ts`): funcionan igual
-  con `ts-node`, con Jest y con `dist/`, sin globs frágiles.
-- `logging: false`: los parámetros de las consultas (hashes) nunca llegan al log.
-- Las entidades ORM (`*.orm-entity.ts`) son clases **distintas** de las entidades de
-  dominio; los **mappers** traducen en ambos sentidos y reconstruyen con
-  `fromPrimitives()` (que revalida).
+- `synchronize: false` en **todos** los entornos. El esquema sale solo de migraciones con `up()` y `down()`.
+- **Una sola definición de conexión** (`buildDataSourceOptions`) para la app y el CLI.
+- Entidades y migraciones en **listas explícitas** (`src/database/`): funcionan igual con ts-node, Jest y `dist/`.
+- `logging: false`: los parámetros de las consultas (hashes, emails) nunca llegan al log.
+- Las entidades ORM (`*.orm-entity.ts`) son clases **distintas** de las de dominio; los
+  **mappers** traducen y reconstruyen con `fromPrimitives()` (que revalida).
 
 ## Modelo de datos
 
 ```mermaid
 erDiagram
-  users ||--o{ tasks : "assignee_id (FK, RESTRICT)"
-  users {
+  events ||--o| ticket_allocations : "event_id (PK y FK)"
+  events ||--o{ tickets : "event_id (FK)"
+  events {
     uuid id PK
-    varchar_80 name
-    varchar_254 email "UNIQUE uq_users_email"
-    varchar_255 password_hash
-    varchar_16 status "CHECK ACTIVE|INACTIVE"
-    timestamptz created_at
-    timestamptz updated_at
+    varchar_120 name
+    varchar_120 venue "UNIQUE (lower(venue), starts_at)"
+    timestamptz starts_at
+    integer capacity "CHECK 1..100000"
+    integer price_cents "CHECK 0..10000000"
+    varchar_3 currency "CHECK PEN|USD|EUR"
+    varchar_16 status "CHECK SCHEDULED|CANCELLED"
     integer version "CHECK >= 1"
   }
-  tasks {
+  ticket_allocations {
+    uuid event_id PK
+    integer capacity
+    integer sold "CHECK 0 <= sold <= capacity"
+    integer price_cents
+    varchar_3 currency
+    timestamptz starts_at
+    varchar_16 status "CHECK OPEN|CLOSED"
+    integer version "CHECK >= 1"
+  }
+  tickets {
     uuid id PK
-    varchar_120 title
-    text description "DEFAULT ''"
-    varchar_16 status "CHECK TODO|IN_PROGRESS|IN_REVIEW|DONE"
-    varchar_8 priority "CHECK LOW|MEDIUM|HIGH"
-    uuid assignee_id "NULL, FK fk_tasks_assignee"
-    timestamptz created_at
-    timestamptz updated_at
+    uuid event_id FK
+    varchar_80 holder_name
+    varchar_254 holder_email
+    varchar_64 code_hash "UNIQUE (HMAC, nunca el código)"
+    integer price_cents
+    varchar_16 status "CHECK ISSUED|USED|REFUNDED"
+    timestamptz used_at "CHECK solo si USED"
     integer version "CHECK >= 1"
   }
 ```
 
+(`created_at`/`updated_at`/`purchased_at` omitidos en el diagrama.)
+
 ## Restricciones e índices
 
-| Objeto | Tipo | Regla que respalda | Por qué en la base |
+| Objeto | Tipo | Regla | Por qué en la base |
 |---|---|---|---|
-| `pk_users`, `pk_tasks` | PRIMARY KEY | Identidad | — |
-| `uq_users_email` | UNIQUE | RN-002 | Dos registros concurrentes pueden pasar el chequeo del handler; solo la base lo garantiza. El adaptador traduce la violación `23505` a `USER_EMAIL_ALREADY_IN_USE` (409). Probado en e2e con 3 peticiones simultáneas. |
-| `ck_users_status` | CHECK | Estados del dominio | Defensa en profundidad |
-| `fk_tasks_assignee` | FOREIGN KEY `ON DELETE RESTRICT` | RN-011 | El responsable debe existir; los usuarios se desactivan, no se borran. Violación `23503` → `TASK_ASSIGNEE_NOT_FOUND`. |
-| `ck_tasks_status`, `ck_tasks_priority` | CHECK | RN-009, RN-014 | Defensa en profundidad |
-| `ck_tasks_assignee_required` | CHECK `status = 'TODO' OR assignee_id IS NOT NULL` | RN-010 | La invariante se mantiene aunque se escriba fuera de la app |
-| `ix_tasks_status_created_at` | INDEX | Filtro por columna del tablero ordenado | Consulta `GET /tasks?status=` |
-| `ck_users_version`, `ck_tasks_version` | CHECK `version >= 1` | Bloqueo optimista (ADR-011) | Defensa en profundidad |
-| `ix_tasks_assignee_id` | INDEX | Filtro por responsable / liberación de tareas | `GET /tasks?assigneeId=`, RN-013 |
+| `uq_events_venue_starts_at` | UNIQUE INDEX `(lower(venue), starts_at)` | RN-006 | Dos programaciones simultáneas pasan ambas el chequeo del handler; solo la base lo garantiza. Violación `23505` → `EVENT_SLOT_TAKEN`. Probado en e2e con 3 peticiones simultáneas. |
+| `ck_events_capacity`, `ck_events_price`, `ck_events_currency`, `ck_events_status` | CHECK | RN-004, RN-005 | Defensa en profundidad |
+| `pk_ticket_allocations` | PRIMARY KEY `(event_id)` | RN-009 | Un único cupo por evento: si dos primeras compras lo crean a la vez, una recibe `23505` → se traduce a conflicto y se reintenta. |
+| `ck_ticket_allocations_sold` | CHECK `sold BETWEEN 0 AND capacity` | RN-009 | Última barrera contra la sobreventa aunque falle el código. |
+| `fk_ticket_allocations_event`, `fk_tickets_event` | FOREIGN KEY `ON DELETE RESTRICT` | — | La venta solo existe para eventos del catálogo; los eventos se cancelan, no se borran. |
+| `uq_tickets_code_hash` | UNIQUE | RN-012 | Cada código (su HMAC) identifica una sola entrada. |
+| `ck_tickets_used_at` | CHECK `(status = 'USED') = (used_at IS NOT NULL)` | RN-013 | Estado y fecha de uso siempre coherentes. |
+| `ck_*_version` | CHECK `version >= 1` | ADR-011 | Bloqueo optimista |
+| `ix_events_status_starts_at`, `ix_tickets_event_status` | INDEX | Consultas | Cartelera por estado/fecha; reembolso de las entradas de un evento. |
 
 ## Migraciones
 
 | Archivo | up | down |
 |---|---|---|
-| `1759363200000-CreateUsersTable.ts` | `CREATE TABLE users` + PK, UNIQUE, CHECK | `DROP TABLE users` |
-| `1759363260000-CreateTasksTable.ts` | `CREATE TABLE tasks` + PK, FK, CHECKs, 2 índices | `DROP INDEX` ×2, `DROP TABLE tasks` |
-| `1759413600000-AddOptimisticLockingVersion.ts` | columna `version` + CHECK en ambas tablas | `DROP CONSTRAINT`, `DROP COLUMN` |
+| `1759536000000-CreateEventsTable.ts` | `events` + PK, CHECKs, índice único funcional, índice | `DROP INDEX` ×2, `DROP TABLE` |
+| `1759536060000-CreateTicketingTables.ts` | `ticket_allocations` + `tickets` con PK, FKs, UNIQUE, CHECKs, índice | `DROP INDEX`, `DROP TABLE` ×2 |
 
-Evidencia de reversibilidad: `test/e2e/migrations.e2e-spec.ts` revierte las tres
-migraciones, comprueba que la columna `version` y las tablas desaparecen y las vuelve a aplicar.
+Evidencia de reversibilidad: `test/e2e/migrations.e2e-spec.ts` revierte ambas, comprueba
+que las tablas desaparecen y las vuelve a aplicar.
 
 ## Adaptadores de repositorio
 
 | Puerto | Adaptador real | Adaptador en memoria |
 |---|---|---|
-| `UserRepository` | `TypeOrmUserRepository` | `InMemoryUserRepository` (emula el UNIQUE de email) |
-| `TaskRepository` | `TypeOrmTaskRepository` | `InMemoryTaskRepository` |
+| `EventRepository` | `TypeOrmEventRepository` | `InMemoryEventRepository` (emula el índice único) |
+| `TicketAllocationRepository` | `TypeOrmTicketAllocationRepository` | `InMemoryTicketAllocationRepository` (emula la PK) |
+| `TicketRepository` | `TypeOrmTicketRepository` | `InMemoryTicketRepository` |
 
-Contrato común: `findById` devuelve `null` si no existe (no lanza); los adaptadores
-solo consultan, guardan y traducen; los listados se ordenan por `created_at, id`.
+Contrato común: las búsquedas devuelven `null` si no hay resultado; los adaptadores solo
+consultan, guardan y traducen; todos aplican bloqueo optimista.
 
 ## Bloqueo optimista (ADR-011)
 
-- Un agregado nuevo tiene `version = 0` y se **inserta** con `version = 1`.
-- Uno existente se guarda con `UPDATE … SET …, version = version + 1 WHERE id = ? AND version = ?`.
-  Si no se actualiza ninguna fila, otra operación lo modificó después de leerlo y el
-  adaptador lanza `*_CONCURRENT_MODIFICATION` (409) en lugar de sobrescribir.
-- Tras guardar, el adaptador llama a `markAsPersisted()` (la instancia queda en la versión nueva).
-- El adaptador en memoria emula exactamente el mismo contrato.
-- Evidencia: `test/e2e/concurrency.e2e-spec.ts` (adaptador real) y los specs en memoria;
-  se comprobó que la prueba e2e falla si se restaura el `save()` anterior.
+- Agregado nuevo: `version = 0` → se **inserta** con `version = 1`.
+- Existente: `UPDATE … SET …, version = version + 1 WHERE id = ? AND version = ?`. Si no se
+  actualiza ninguna fila, otra operación lo cambió: `*_CONCURRENT_MODIFICATION` en lugar de sobrescribir.
+- Evidencia: `test/e2e/concurrency.e2e-spec.ts`. **Sin** el bloqueo, 30 compradores
+  simultáneos para 5 plazas obtienen 16 entradas (comprobado); **con** él, exactamente 5.

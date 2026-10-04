@@ -1,20 +1,17 @@
 # Guía paso a paso: construir el proyecto desde cero (para aprenderlo)
 
-Esta guía te lleva a **reconstruir tú mismo** el proyecto, fase por fase, entendiendo
-el *porqué* de cada pieza. Al final podrás explicarlo y defenderlo ante el evaluador.
+Esta guía te lleva a **reconstruir tú mismo** la API de venta de entradas, fase por fase,
+entendiendo el *porqué* de cada pieza. Al final podrás explicarla y defenderla ante el evaluador.
 
 > **Cómo usarla**
-> 1. Crea una carpeta **nueva y vacía** (tu versión). Ten abierto al lado este
->    repositorio (la versión de referencia).
-> 2. En cada fase: lee la explicación → **escribe tú el código** (no copies y pegues
->    sin leer) → ejecuta el **punto de control** → compara con el archivo de referencia
->    indicado → haz un `git commit`.
-> 3. Responde las **preguntas de repaso** de cada fase sin mirar. Si no puedes, relee.
+> 1. Crea una carpeta **nueva y vacía** (tu versión). Ten abierto al lado este repositorio
+>    (la versión de referencia).
+> 2. En cada fase: lee la explicación → **escribe tú el código** (no copies sin leer) →
+>    ejecuta el **punto de control** → compara con el archivo de referencia → `git commit`.
+> 3. Responde las **preguntas de repaso** sin mirar. Si no puedes, relee.
 >
-> Tiempo estimado: 12–20 horas repartidas en varios días. No intentes hacerlo de golpe.
->
-> Requisitos instalados: Node 20+, pnpm, Docker Desktop, Git y VS Code
-> (si no los tienes, sigue la Parte 1 del README).
+> Tiempo estimado: 12–20 horas repartidas en varios días.
+> Requisitos instalados: Node 20+, pnpm, Docker Desktop, Git y VS Code (ver `EMPIEZA-AQUI.md`).
 
 ---
 
@@ -23,19 +20,19 @@ el *porqué* de cada pieza. Al final podrás explicarlo y defenderlo ante el eva
 0. [Las ideas antes del código](#fase-0--las-ideas-antes-del-código)
 1. [Proyecto vacío y herramientas](#fase-1--proyecto-vacío-y-herramientas)
 2. [Shared kernel: errores, eventos, agregados](#fase-2--shared-kernel)
-3. [Value objects de Users](#fase-3--value-objects-de-users)
-4. [La entidad User](#fase-4--la-entidad-user-agregado)
-5. [Puertos de Users](#fase-5--puertos-de-users)
-6. [Adaptadores en memoria y hasher](#fase-6--adaptadores-en-memoria-y-hasher)
-7. [Casos de uso con CQRS (Users)](#fase-7--casos-de-uso-con-cqrs-users)
-8. [Dominio de Tasks: el tablero Kanban](#fase-8--dominio-de-tasks)
-9. [Casos de uso de Tasks](#fase-9--casos-de-uso-de-tasks)
+3. [Value objects del Catálogo](#fase-3--value-objects-del-catálogo)
+4. [El agregado Event](#fase-4--el-agregado-event)
+5. [Puertos del Catálogo](#fase-5--puertos-del-catálogo)
+6. [Adaptador en memoria](#fase-6--adaptador-en-memoria)
+7. [Casos de uso con CQRS (Catálogo)](#fase-7--casos-de-uso-con-cqrs-catálogo)
+8. [Dominio de la Venta: cupo y entradas](#fase-8--dominio-de-la-venta)
+9. [Casos de uso de la Venta](#fase-9--casos-de-uso-de-la-venta)
 10. [Configuración validada](#fase-10--configuración-validada)
 11. [Docker y migraciones](#fase-11--docker-y-migraciones)
-12. [Persistencia real: TypeORM + mappers](#fase-12--persistencia-real-typeorm--mappers)
+12. [Persistencia real: TypeORM, mappers y bloqueo optimista](#fase-12--persistencia-real)
 13. [El borde HTTP: DTOs, controladores, filtros](#fase-13--el-borde-http)
 14. [Comunicación entre contextos](#fase-14--comunicación-entre-contextos)
-15. [Pruebas e2e](#fase-15--pruebas-e2e)
+15. [Pruebas e2e (incluida la de sobreventa)](#fase-15--pruebas-e2e)
 16. [Prueba de arquitectura](#fase-16--prueba-de-arquitectura)
 17. [Documentación y autoevaluación](#fase-17--documentación-y-autoevaluación)
 18. [Preguntas que te puede hacer el evaluador](#fase-18--preguntas-del-evaluador)
@@ -44,132 +41,94 @@ el *porqué* de cada pieza. Al final podrás explicarlo y defenderlo ante el eva
 
 ## Fase 0 — Las ideas antes del código
 
-Lee esto con calma: es lo que más te van a preguntar.
-
 ### El problema que resolvemos
-El NestJS "de tutorial" es `Controller → Service → Repository de TypeORM`. Las reglas de
-negocio quedan desparramadas en servicios, las entidades son bolsas de datos con
-decoradores de base de datos, y para probar una regla necesitas levantar Nest y una BD.
+El NestJS "de tutorial" es `Controller → Service → Repository de TypeORM`. Las reglas quedan
+desparramadas en servicios, las entidades son bolsas de datos con decoradores de base de
+datos, y para probar una regla necesitas levantar Nest y una base de datos.
 
 ### Arquitectura hexagonal (puertos y adaptadores)
-Imagina el **dominio** (las reglas del negocio) en el centro de un hexágono. Todo lo
-técnico (HTTP, PostgreSQL, hashing) está **afuera** y se conecta por **puertos**:
+El **dominio** (las reglas) está en el centro. Todo lo técnico (HTTP, PostgreSQL, hashing)
+está afuera y se conecta por **puertos**:
+- **Puerto**: una *interfaz* que el dominio define ("necesito guardar eventos").
+- **Adaptador**: una *implementación* ("los guardo en PostgreSQL" o "en un `Map` para pruebas").
 
-- **Puerto**: una *interfaz* que el dominio define ("necesito guardar usuarios").
-- **Adaptador**: una *implementación* concreta de ese puerto ("los guardo en
-  PostgreSQL con TypeORM" o "los guardo en un `Map` en memoria para las pruebas").
-
-**Regla de dependencias**: el código de afuera conoce al de adentro, nunca al revés.
-
+**Regla de dependencias**: lo de afuera conoce lo de adentro, nunca al revés.
 ```
 infrastructure  ──►  application  ──►  domain
 (HTTP, BD, Nest)     (casos de uso)    (reglas puras, TypeScript sin frameworks)
 ```
 
-### DDD táctico (las piezas del dominio)
-| Pieza | Qué es | Ejemplo en el proyecto |
+### DDD táctico
+| Pieza | Qué es | Ejemplo |
 |---|---|---|
-| **Value object** | Un valor con reglas propias, sin identidad, inmutable, se compara por valor | `Email`, `TaskStatus` |
-| **Entidad / Agregado** | Algo con identidad que cambia con el tiempo y protege sus reglas | `User`, `Task` |
-| **Invariante** | Regla que *siempre* debe cumplirse | "Fuera de TODO, una tarea tiene responsable" |
-| **Evento de dominio** | Un hecho que ya ocurrió (nombre en pasado) | `UserDeactivated` |
-| **Bounded context** | Un "subsistema" con su propio lenguaje y modelo | Users y Tasks |
+| **Value object** | Valor con reglas propias, inmutable, se compara por valor | `Venue`, `Quantity`, `Money` |
+| **Agregado** | Algo con identidad que cambia y protege sus reglas | `Event`, `TicketAllocation`, `Ticket` |
+| **Invariante** | Regla que *siempre* se cumple | "vendidas ≤ aforo" |
+| **Evento de dominio** | Hecho ocurrido (en pasado) | `EventCancelled`, `TicketsSold` |
+| **Bounded context** | Subsistema con su propio lenguaje | Catálogo y Venta |
+
+> ⚠️ Cuidado con la palabra "evento": un **evento** (concierto) es el agregado `Event`; un
+> **evento de dominio** es un hecho del negocio (`TicketsSold`). Distínguelos al explicar.
 
 ### CQRS
-Separar **escribir** (Commands: `CreateUser`) de **leer** (Queries: `GetUser`).
-El controlador no llama a servicios: pone un mensaje en un **bus** y un **handler** lo atiende.
+Separar **escribir** (Commands: `PurchaseTickets`) de **leer** (Queries: `GetTicket`). El
+controlador pone un mensaje en un **bus** y un **handler** lo atiende.
 
-### El dominio que modelamos
-Una startup con un tablero Kanban:
-- **Users**: miembros del equipo (alta, baja, consulta).
-- **Tasks**: tarjetas que se asignan y se mueven `TODO → IN_PROGRESS → IN_REVIEW → DONE`.
+### El dominio
+Una productora de eventos:
+- **Catálogo**: programa eventos (fecha, recinto, aforo, precio) y los cancela.
+- **Venta**: vende entradas **sin sobrevender nunca**, las valida en la puerta **una vez** y
+  las reembolsa si el evento se cancela.
 
 **Preguntas de repaso**
 1. ¿Por qué el dominio no puede importar NestJS ni TypeORM?
-2. ¿Qué diferencia hay entre un puerto y un adaptador? Da un ejemplo de cada uno.
-3. ¿Qué diferencia hay entre un value object y una entidad?
+2. Diferencia entre puerto y adaptador, con un ejemplo de cada uno.
+3. Diferencia entre un "evento" (concierto) y un "evento de dominio".
 
 ---
 
 ## Fase 1 — Proyecto vacío y herramientas
 
-### 1.1 Crear la carpeta y Git
 ```bash
-mkdir kanban-mi-version
-cd kanban-mi-version
+mkdir mi-ticketing && cd mi-ticketing
 git init
 pnpm init
-```
 
-### 1.2 Instalar dependencias (versiones fijas, iguales a la referencia)
-```bash
 pnpm add -E @nestjs/common@11.2.7 @nestjs/core@11.2.7 @nestjs/platform-express@11.2.7 @nestjs/cqrs@11.0.3 @nestjs/config@4.0.4 @nestjs/typeorm@11.0.3 typeorm@0.3.31 pg@8.16.3 class-validator@0.14.4 class-transformer@0.5.1 reflect-metadata@0.2.2 rxjs@7.8.2 dotenv@16.6.1 helmet@8.3.0
 
 pnpm add -D -E @nestjs/cli@11.0.24 @nestjs/testing@11.2.7 typescript@5.9.3 ts-node@10.9.2 jest@29.7.0 ts-jest@29.4.14 @types/jest@29.5.14 @types/node@22.20.5 @types/express@5.0.6 @types/pg@8.23.1 supertest@7.1.4 @types/supertest@6.0.3
 ```
 
-**Para qué sirve cada una** (apréndelo, te lo pueden preguntar):
-- `@nestjs/cqrs`: `CommandBus`, `QueryBus`, `EventBus`.
-- `typeorm` + `pg`: acceso a PostgreSQL. `@nestjs/typeorm` lo integra en Nest.
-- `@nestjs/config`: lee y valida variables de entorno.
-- `class-validator` / `class-transformer`: validan los DTOs en el borde HTTP.
-- `helmet`: cabeceras de seguridad HTTP.
-- `jest` + `ts-jest`: pruebas. `supertest`: hacer peticiones HTTP en las e2e.
+Para qué sirve cada una: `@nestjs/cqrs` (buses), `typeorm` + `pg` (PostgreSQL),
+`@nestjs/config` (variables de entorno), `class-validator`/`class-transformer` (DTOs),
+`helmet` (cabeceras de seguridad), `jest`/`ts-jest` (pruebas), `supertest` (HTTP en e2e).
 
-### 1.3 Archivos de configuración
-Copia de la referencia y **lee cada línea**:
-
-| Archivo | Lo importante |
-|---|---|
-| `tsconfig.json` | `strict: true`; `experimentalDecorators` y `emitDecoratorMetadata` (Nest los necesita) |
-| `tsconfig.build.json` | Excluye tests del build; `incremental: false` (evita un `dist/` incompleto) |
-| `nest-cli.json` | Le dice a `nest build` qué tsconfig usar |
-| `.gitignore` | **`.env` nunca se sube**; solo `.env.example` |
-| `.gitattributes` | Fin de línea LF (evita problemas Windows ↔ Linux) |
-| `.env.example` | Plantilla de variables, sin secretos reales |
-
-En `package.json` copia las secciones `scripts` y `jest` de la referencia.
-
-La configuración de Jest busca pruebas también en `test/architecture`, así que crea la
-carpeta aunque esté vacía (si no, `pnpm test` falla con *"roots option was not found"*):
+Copia de la referencia y **lee cada línea**: `tsconfig.json`, `tsconfig.build.json`,
+`nest-cli.json`, `.gitignore` (**`.env` nunca se sube**), `.gitattributes`, `.env.example`,
+y las secciones `scripts` y `jest` de `package.json`. Crea también `test/architecture`
+(Jest la busca aunque esté vacía):
 ```bash
 mkdir test
 mkdir test/architecture
 ```
 
-### Punto de control
-```bash
-pnpm exec tsc --version   # 5.9.3
-git add -A && git commit -m "chore: scaffold project"
-```
-
-**Preguntas de repaso**
-1. ¿Por qué `.env` está en `.gitignore` y `.env.example` no?
-2. ¿Por qué fijamos versiones exactas?
+**Punto de control**: `pnpm exec tsc --version` → 5.9.3 · `git commit -m "chore: scaffold"`.
 
 ---
 
 ## Fase 2 — Shared kernel
 
-El *shared kernel* (`src/shared/domain`) contiene abstracciones **genéricas** que usan
-ambos contextos. **Nunca** conceptos de negocio (nada de `Email` aquí).
+`src/shared/domain` contiene abstracciones **genéricas** de ambos contextos. Nunca conceptos de negocio.
 
 ### 2.1 La excepción de dominio
-El dominio necesita decir "esto es inválido / no existe / choca con el estado actual"
-**sin saber nada de HTTP**.
-
 ```ts
 // src/shared/domain/domain-exception.ts
-export const DomainErrorKind = {
-  VALIDATION: 'VALIDATION',
-  NOT_FOUND: 'NOT_FOUND',
-  CONFLICT: 'CONFLICT',
-} as const;
+export const DomainErrorKind = { VALIDATION: 'VALIDATION', NOT_FOUND: 'NOT_FOUND', CONFLICT: 'CONFLICT' } as const;
 export type DomainErrorKind = (typeof DomainErrorKind)[keyof typeof DomainErrorKind];
 
 export abstract class DomainException extends Error {
   protected constructor(
-    public readonly code: string,        // estable: 'USER_NOT_FOUND'
+    public readonly code: string,        // estable: 'TICKET_NOT_ENOUGH_AVAILABLE'
     public readonly kind: DomainErrorKind,
     message: string,
   ) {
@@ -178,807 +137,518 @@ export abstract class DomainException extends Error {
   }
 }
 ```
-> 💡 `code` es un contrato con el cliente (no cambia). `kind` es lo que más tarde
-> un filtro traducirá a 400/404/409.
+> 💡 `code` es un contrato con el cliente. `kind` lo traducirá un filtro a 400/404/409.
+> El dominio **no sabe** qué es HTTP.
 
-### 2.2 Eventos y raíz de agregado
-```ts
-// src/shared/domain/domain-event.ts
-export interface DomainEvent {
-  readonly eventName: string;
-  readonly occurredOn: Date;
-}
-```
-
-La raíz de agregado **acumula eventos** y lleva una **versión** (para el bloqueo
-optimista, que entenderás en la fase 12):
-
+### 2.2 Raíz de agregado: eventos + versión
 ```ts
 // src/shared/domain/aggregate-root.ts (resumen)
 export abstract class AggregateRoot {
   private domainEvents: DomainEvent[] = [];
-  private _version: number;
+  private _version: number;                       // 0 = nunca guardado; >= 1 = guardado
 
   protected constructor(version: number) { /* valida entero >= 0 */ this._version = version; }
-
   get version(): number { return this._version; }
-  markAsPersisted(): void { this._version += 1; }        // lo llama el repositorio al guardar
+  markAsPersisted(): void { this._version += 1; }  // lo llama el repositorio tras guardar
 
   protected record(event: DomainEvent): void { this.domainEvents.push(event); }
-  pullDomainEvents(): DomainEvent[] {                    // los saca y vacía la lista
-    const events = this.domainEvents;
-    this.domainEvents = [];
-    return events;
-  }
+  pullDomainEvents(): DomainEvent[] { const e = this.domainEvents; this.domainEvents = []; return e; }
 }
 ```
+La versión servirá para el **bloqueo optimista** (fase 12): es lo que impide sobrevender.
 
-### 2.3 El puerto para publicar eventos
+### 2.3 Puerto para publicar eventos y utilidades
 ```ts
-// src/shared/domain/ports/domain-event-publisher.port.ts
 export const DOMAIN_EVENT_PUBLISHER = Symbol('DOMAIN_EVENT_PUBLISHER');
-export interface DomainEventPublisher {
-  publishAll(events: DomainEvent[]): Promise<void>;
-}
+export interface DomainEventPublisher { publishAll(events: DomainEvent[]): Promise<void>; }
 ```
-> 💡 **¿Por qué un `Symbol`?** Las interfaces de TypeScript desaparecen al compilar.
-> Nest necesita un *valor* real para saber qué inyectar: el `Symbol` es ese valor.
+> 💡 **¿Por qué `Symbol`?** Las interfaces de TypeScript desaparecen al compilar; Nest
+> necesita un valor real para saber qué inyectar.
 
-Copia también `src/shared/domain/uuid.ts`.
-
-**Referencia**: `src/shared/domain/*`
-
-### Punto de control
-```bash
-pnpm exec tsc --noEmit
-git commit -am "feat: shared kernel"
-```
-
-**Preguntas de repaso**
-1. ¿Por qué `DomainException` no usa `HttpStatus`?
-2. ¿Qué hace `pullDomainEvents()` y por qué vacía la lista?
+Copia también `src/shared/domain/uuid.ts` (`generateUuid`, `isValidUuid`, `randomString`
+con un generador **criptográfico**, que usaremos para los códigos de entrada).
 
 ---
 
-## Fase 3 — Value objects de Users
+## Fase 3 — Value objects del Catálogo
 
-Un value object **no puede existir en estado inválido**. Para garantizarlo:
-1. **Constructor privado** (nadie puede hacer `new Email('basura')`).
-2. **Factory estática** `create()` que **normaliza** y **valida**.
-3. `equals()` para comparar por valor (nunca `===` entre objetos).
+Un value object **no puede existir inválido**: constructor **privado**, factory `create()`
+que **normaliza y valida**, y `equals()` para comparar por valor.
 
 ```ts
-// src/users/domain/value-objects/email.ts
-const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
-const MAX_LENGTH = 254;
-
-/** RN-001: email válido, sin espacios exteriores y en minúsculas. */
-export class Email {
+// src/catalog/domain/value-objects/venue.ts
+/** RN-002: "Estadio Nacional" y "estadio nacional" son el mismo recinto. */
+export class Venue {
   private constructor(public readonly value: string) {}
 
-  static create(value: string): Email {
-    const normalized = typeof value === 'string' ? value.trim().toLowerCase() : '';
-    if (normalized.length === 0 || normalized.length > MAX_LENGTH || !EMAIL_PATTERN.test(normalized)) {
-      throw new InvalidEmailError();
-    }
-    return new Email(normalized);
+  static create(value: string): Venue {
+    const normalized = typeof value === 'string' ? value.trim().replace(/\s+/g, ' ') : '';
+    if (normalized.length < 2 || normalized.length > 120) throw new InvalidVenueError();
+    return new Venue(normalized);
   }
 
-  equals(other: Email): boolean {
-    return other instanceof Email && this.value === other.value;
-  }
+  get key(): string { return this.value.toLowerCase(); }   // para comparar
+  equals(other: Venue): boolean { return other instanceof Venue && this.key === other.key; }
 }
 ```
 
-Cada error es una subclase de `DomainException` con su código:
-
 ```ts
-// src/users/domain/errors/user.errors.ts (uno de ellos)
-export class InvalidEmailError extends DomainException {
-  constructor() {
-    super('USER_INVALID_EMAIL', DomainErrorKind.VALIDATION, 'Email must be a valid address of at most 254 characters');
+// src/catalog/domain/value-objects/ticket-price.ts (lo esencial)
+/** RN-005: céntimos ENTEROS (en coma flotante 0,1 + 0,2 ≠ 0,3). */
+static create(amountCents: number, currency: string): TicketPrice {
+  const c = currency.trim().toUpperCase();
+  if (!Number.isInteger(amountCents) || amountCents < 0 || amountCents > 10_000_000 || !['PEN','USD','EUR'].includes(c)) {
+    throw new InvalidTicketPriceError();
   }
+  return new TicketPrice(amountCents, c);
 }
 ```
 
-Ahora escribe tú los demás siguiendo el mismo patrón:
+Escribe tú: `EventId`, `EventName` (3–120), `EventStart` (fecha ISO **con zona horaria**),
+`Capacity` (1–100.000), `EventStatus` (SCHEDULED/CANCELLED). Cada error es una subclase de
+`DomainException` (`catalog/domain/errors/event.errors.ts`).
 
-| Value object | Regla |
-|---|---|
-| `UserId` | UUID válido; `generate()` crea uno nuevo |
-| `UserName` | 2–80 caracteres, espacios colapsados (RN-003) |
-| `PlainPassword` | 8–72 caracteres, letra y dígito (RN-004). `toString()` y `toJSON()` devuelven `[REDACTED]` para que nunca salga en un log |
-| `PasswordHash` | No vacío; también `[REDACTED]` |
-| `UserStatus` | `ACTIVE` o `INACTIVE` |
+> 💡 **¿Por qué exigir zona horaria?** `"2027-03-20T21:00:00"` sin `Z` se interpreta con
+> la hora del servidor: el mismo dato daría horas distintas en tu PC y en producción.
 
-> 💡 **Ojo con la seguridad**: el mensaje de `WeakPasswordError` **no** incluye la contraseña.
-
-### Tu primera prueba
 ```ts
-// src/users/domain/value-objects/email.spec.ts
-describe('Email (RN-001)', () => {
-  it('normalizes surrounding spaces and casing', () => {
-    expect(Email.create('  Ana@Startup.IO ').value).toBe('ana@startup.io');
-  });
-  it.each(['', 'ana', 'ana@', 'ana perez@startup.io'])('rejects %p', (value) => {
-    expect(() => Email.create(value)).toThrow(InvalidEmailError);
-  });
-  it('compares by value', () => {
-    expect(Email.create('ANA@x.io').equals(Email.create('ana@x.io'))).toBe(true);
-  });
+// prueba: src/catalog/domain/value-objects/catalog-values.spec.ts
+it('keeps the display casing but compares case-insensitively', () => {
+  expect(Venue.create('  Estadio   Nacional ').value).toBe('Estadio Nacional');
+  expect(Venue.create('Estadio Nacional').equals(Venue.create('ESTADIO NACIONAL'))).toBe(true);
 });
 ```
 
-**Referencia**: `src/users/domain/value-objects/*` y sus `.spec.ts`.
-
-### Punto de control
-```bash
-pnpm test          # tus pruebas en verde, sin Nest ni base de datos
-git commit -am "feat(users): value objects"
-```
+**Punto de control**: `pnpm test` en verde · commit.
 
 **Preguntas de repaso**
-1. ¿Qué pasaría si el constructor de `Email` fuera público?
-2. ¿Por qué `Email.create(' A@B.io ')` y `Email.create('a@b.io')` son "iguales"?
-3. ¿Por qué `PlainPassword` sobrescribe `toJSON()`?
+1. ¿Qué pasaría si el constructor de `Venue` fuera público?
+2. ¿Por qué el precio se guarda en céntimos enteros?
 
 ---
 
-## Fase 4 — La entidad User (agregado)
+## Fase 4 — El agregado Event
 
-Una entidad **rica**: no tiene setters; cambia solo con métodos que expresan una
-**intención de negocio** y que protegen las reglas.
+Un agregado **rico**: sin setters; cambia con métodos que expresan una **intención**.
 
 ```ts
-// src/users/domain/entities/user.ts (lo esencial)
-export class User extends AggregateRoot {
-  private constructor(
-    private readonly _id: UserId,
-    private _name: UserName,
-    private readonly _email: Email,
-    private readonly _passwordHash: PasswordHash,
-    private _status: UserStatus,
-    private readonly _createdAt: Date,
-    private _updatedAt: Date,
-    version: number,
-  ) {
-    super(version);
+// src/catalog/domain/entities/event.ts (lo esencial)
+export class Event extends AggregateRoot {
+  /** RN-003: solo se programa a futuro. Nace SCHEDULED, versión 0, y registra EventScheduled. */
+  static schedule(props: ScheduleEventProps, now = new Date()): Event {
+    if (!props.startsAt.isAfter(now)) throw new EventStartInPastError();
+    const event = new Event(props.id, props.name, props.venue, props.startsAt, props.capacity,
+                            props.price, EventStatus.scheduled(), now, now, 0);
+    event.record(new EventScheduled(event.id.value, props.name.value, props.startsAt.value, props.capacity.value, now));
+    return event;
   }
 
-  /** Alta: nace ACTIVO, versión 0 (nunca guardado) y registra UserRegistered. */
-  static register(props: RegisterUserProps, now = new Date()): User {
-    const user = new User(props.id, props.name, props.email, props.passwordHash, UserStatus.active(), now, now, 0);
-    user.record(new UserRegistered(user._id.value, user._email.value, user._name.value, now));
-    return user;
-  }
-
-  /** RN-005: solo un usuario activo puede desactivarse. */
-  deactivate(now = new Date()): void {
-    if (!this._status.isActive()) throw new UserAlreadyInactiveError(this._id.value);
-    this._status = UserStatus.inactive();
+  /** RN-007: solo se cancela si está programado y no ha empezado. */
+  cancel(now = new Date()): void {
+    if (this._status.isCancelled()) throw new EventAlreadyCancelledError(this._id.value);
+    if (this.hasStarted(now)) throw new EventAlreadyStartedError(this._id.value);
+    this._status = EventStatus.cancelled();
     this._updatedAt = now;
-    this.record(new UserDeactivated(this._id.value, now));
+    this.record(new EventCancelled(this._id.value, now));
   }
 
-  /** Reconstruir desde la BD: VUELVE A VALIDAR todo con los value objects. */
-  static fromPrimitives(p: UserPrimitives): User {
-    return new User(
-      UserId.create(p.id), UserName.create(p.name), Email.create(p.email),
-      PasswordHash.create(p.passwordHash), UserStatus.create(p.status),
-      p.createdAt, p.updatedAt, AggregateRoot.persistedVersion(p.version),
-    );
-  }
-
-  toPrimitives(): UserPrimitives { /* devuelve un objeto plano con todos los campos */ }
+  /** Reconstruir desde la BD: VUELVE A VALIDAR todo (y la versión >= 1). */
+  static fromPrimitives(p: EventPrimitives): Event { /* EventName.create(p.name), ... */ }
+  toPrimitives(): EventPrimitives { /* objeto plano */ }
 }
 ```
+> 💡 **¿Por qué `fromPrimitives` revalida?** Si una fila está corrupta, no queremos un
+> agregado inválido circulando. Un `return new Event(...)` sin validar sería un error.
+> **Ojo**: al reconstruir NO se exige fecha futura (un evento pasado sigue siendo válido).
 
-Los eventos son **clases planas** con nombre en **pasado**:
-
-```ts
-// src/users/domain/events/user-deactivated.event.ts
-export class UserDeactivated implements DomainEvent {
-  readonly eventName = 'users.user_deactivated';
-  constructor(public readonly userId: string, public readonly occurredOn: Date) {}
-}
-```
-
-> 💡 **¿Por qué `fromPrimitives` revalida?** Si alguien corrompe una fila en la base
-> (por ejemplo, un email inválido), no queremos un `User` inválido circulando por el
-> sistema. Un simple `return new User(...)` sin validar sería un error.
-
-> 💡 **¿Por qué `now` es un parámetro?** Para que las pruebas puedan fijar la fecha.
-
-**Referencia**: `src/users/domain/entities/user.ts`, `user.spec.ts`, `src/users/domain/events/*`.
-
-### Punto de control
-Escribe pruebas para: registrar (emite `UserRegistered` sin hash), desactivar,
-desactivar dos veces (error CONFLICT) y `fromPrimitives` con datos corruptos.
-```bash
-pnpm test
-git commit -am "feat(users): User aggregate"
-```
-
-**Preguntas de repaso**
-1. ¿Dónde vive la regla "no se puede desactivar dos veces"? ¿Por qué ahí y no en el controlador?
-2. ¿Por qué el evento `UserRegistered` no lleva el hash?
+**Referencia**: `src/catalog/domain/entities/event.ts`, `event.spec.ts`, `src/catalog/domain/events/*`.
 
 ---
 
-## Fase 5 — Puertos de Users
-
-El dominio declara **lo que necesita**, no **cómo** se hace:
+## Fase 5 — Puertos del Catálogo
 
 ```ts
-// src/users/domain/ports/user.repository.ts
-export const USER_REPOSITORY = Symbol('USER_REPOSITORY');
-
-export interface UserRepository {
-  save(user: User): Promise<void>;
-  findById(id: UserId): Promise<User | null>;   // null si no existe: NO lanza error
-  findByEmail(email: Email): Promise<User | null>;
+// src/catalog/domain/ports/event.repository.ts
+export const EVENT_REPOSITORY = Symbol('EVENT_REPOSITORY');
+export interface EventRepository {
+  save(event: Event): Promise<void>;
+  findById(id: EventId): Promise<Event | null>;                       // null, NO lanza
+  findByVenueAndStart(venue: Venue, startsAt: EventStart): Promise<Event | null>;
+  search(criteria: { status?: EventStatus }): Promise<Event[]>;
 }
 ```
-
-```ts
-// src/users/domain/ports/password-hasher.port.ts
-export const PASSWORD_HASHER = Symbol('PASSWORD_HASHER');
-export interface PasswordHasher {
-  hash(password: PlainPassword): Promise<PasswordHash>;
-  verify(password: PlainPassword, hash: PasswordHash): Promise<boolean>;
-}
-```
-
-> 💡 **¿Por qué `findById` devuelve `null` y no lanza "no encontrado"?** Porque
-> decidir si "no existir" es un error de negocio le corresponde al caso de uso, no a
-> la base de datos. El adaptador solo traduce datos.
-
-**Preguntas de repaso**
-1. ¿En qué carpeta van los puertos y por qué?
-2. ¿Quién decide qué implementación concreta se usa para `USER_REPOSITORY`?
+> 💡 `findById` devuelve `null` porque decidir si "no existir" es un error de negocio le
+> corresponde al caso de uso, no a la base de datos.
 
 ---
 
-## Fase 6 — Adaptadores en memoria y hasher
+## Fase 6 — Adaptador en memoria
 
-### 6.1 Repositorio en memoria
-Implementa el puerto con un `Map`. Debe comportarse **igual que el real**:
-- guarda **copias** de las primitivas (no la instancia);
-- devuelve `User.fromPrimitives(...)` (como haría con una fila de la BD);
-- emula el email único y el control de versión (fase 12).
+Implementa el puerto con un `Map` y haz que se comporte **igual que el real**: guarda
+copias de primitivas, reconstruye con `fromPrimitives`, emula el índice único recinto+hora
+y el control de versión.
 
-**Referencia**: `src/users/infrastructure/persistence/in-memory/in-memory-user.repository.ts`
-
-### 6.2 Hasher con scrypt
-`crypto.scrypt` viene con Node (sin dependencias nativas). Sal aleatoria de 16 bytes,
-formato `scrypt$N$r$p$sal$hash`, y comparación con `timingSafeEqual`.
-
-**Referencia**: `src/users/infrastructure/security/scrypt-password-hasher.ts`
-
-### 6.3 Publicador de eventos en memoria
-```ts
-// src/shared/infrastructure/events/in-memory-domain-event-publisher.ts
-export class InMemoryDomainEventPublisher implements DomainEventPublisher {
-  readonly published: DomainEvent[] = [];
-  async publishAll(events: DomainEvent[]): Promise<void> {
-    this.published.push(...events);
-  }
-}
-```
-
-> 💡 Todo esto vive en `infrastructure/`: son **adaptadores**, aunque no usen base de datos.
-
-**Preguntas de repaso**
-1. ¿Por qué el repositorio en memoria guarda copias y no el objeto?
-2. ¿Por qué scrypt y no SHA-256?
+**Referencia**: `src/catalog/infrastructure/persistence/in-memory/in-memory-event.repository.ts`
+y el publicador `src/shared/infrastructure/events/in-memory-domain-event-publisher.ts`.
 
 ---
 
-## Fase 7 — Casos de uso con CQRS (Users)
-
-Cada caso de uso tiene **su propia carpeta** con el mensaje y su handler:
+## Fase 7 — Casos de uso con CQRS (Catálogo)
 
 ```
-src/users/application/
-├── commands/create-user/      create-user.command.ts + create-user.handler.ts
-├── commands/deactivate-user/  ...
-├── queries/get-user/          get-user.query.ts + get-user.handler.ts
-└── views/user.view.ts         lo que se devuelve al leer (SIN hash)
+src/catalog/application/
+├── commands/schedule-event/   schedule-event.command.ts + .handler.ts
+├── commands/cancel-event/     ...
+├── queries/get-event/         get-event.query.ts + .handler.ts
+├── queries/list-events/       ...
+└── views/event.view.ts
 ```
 
-### 7.1 El comando
+El handler **orquesta** (no decide):
 ```ts
-export class CreateUserCommand extends Command<{ id: string }> {
-  constructor(public readonly name: string, public readonly email: string, public readonly password: string) {
-    super();
+async execute(command: ScheduleEventCommand) {
+  const name = EventName.create(command.name);                 // 1. validar con value objects
+  const venue = Venue.create(command.venue);
+  const startsAt = EventStart.create(command.startsAt);
+  const capacity = Capacity.create(command.capacity);
+  const price = TicketPrice.create(command.priceCents, command.currency);
+
+  if (await this.events.findByVenueAndStart(venue, startsAt)) { // 2. comprobar (RN-006)
+    throw new EventSlotTakenError(venue.value, startsAt.value);
   }
+  const event = Event.schedule({ id: EventId.generate(), name, venue, startsAt, capacity, price }); // 3. dominio
+
+  await this.events.save(event);                                    // 4. persistir
+  await this.eventPublisher.publishAll(event.pullDomainEvents());   // 5. publicar DESPUÉS
+  return { id: event.id.value };
 }
 ```
+> 💡 **Orden sagrado: guardar → publicar.** Si publicas antes y el guardado falla, otros
+> contextos reaccionarían a algo que nunca ocurrió.
 
-### 7.2 El handler: solo **orquesta**
+Prueba **sin Nest y sin base de datos**:
 ```ts
-@CommandHandler(CreateUserCommand)
-export class CreateUserHandler implements ICommandHandler<CreateUserCommand> {
-  constructor(
-    @Inject(USER_REPOSITORY) private readonly users: UserRepository,
-    @Inject(PASSWORD_HASHER) private readonly passwordHasher: PasswordHasher,
-    @Inject(DOMAIN_EVENT_PUBLISHER) private readonly eventPublisher: DomainEventPublisher,
-  ) {}
-
-  async execute(command: CreateUserCommand) {
-    const name = UserName.create(command.name);          // 1. validar con value objects
-    const email = Email.create(command.email);
-    const password = PlainPassword.create(command.password);
-
-    if (await this.users.findByEmail(email)) {           // 2. cargar / comprobar
-      throw new UserEmailAlreadyInUseError(email.value);
-    }
-
-    const passwordHash = await this.passwordHasher.hash(password);
-    const user = User.register({ id: UserId.generate(), name, email, passwordHash }); // 3. delegar al dominio
-
-    await this.users.save(user);                                  // 4. persistir
-    await this.eventPublisher.publishAll(user.pullDomainEvents()); // 5. publicar DESPUÉS
-
-    return { id: user.id.value };
-  }
-}
+const handler = new ScheduleEventHandler(new InMemoryEventRepository(), new InMemoryDomainEventPublisher());
+const { id } = await handler.execute(new ScheduleEventCommand('Rock', 'Estadio', FUTURE, 500, 4500, 'PEN'));
 ```
 
-> 💡 **Orden sagrado: guardar → publicar.** Si publicas antes y el guardado falla,
-> otros contextos reaccionarían a algo que nunca ocurrió.
-
-### 7.3 La vista de lectura
-```ts
-export function toUserView(user: User): UserView {
-  return { id: user.id.value, name: user.name.value, email: user.email.value,
-           status: user.status.value, createdAt: ..., updatedAt: ... };   // ¡sin hash!
-}
-```
-
-### 7.4 Probar el handler SIN Nest y SIN base de datos
-```ts
-const users = new InMemoryUserRepository();
-const events = new InMemoryDomainEventPublisher();
-const handler = new CreateUserHandler(users, new FakePasswordHasher(), events); // ¡con new!
-
-const { id } = await handler.execute(new CreateUserCommand('Ana', 'ana@x.io', 'secret123'));
-expect(events.published[0]).toBeInstanceOf(UserRegistered);
-```
-
-**Referencia**: `src/users/application/**` y sus `.spec.ts` (mira cómo se comprueba el orden guardar → publicar con `jest.spyOn`).
-
-### Punto de control
-```bash
-pnpm test
-git commit -am "feat(users): CQRS use cases"
-```
-
-**Preguntas de repaso**
-1. ¿Qué hace el handler y qué **no** debe hacer?
-2. ¿Cómo demuestra la prueba que la capa de aplicación solo depende de puertos?
-3. ¿Por qué `UserView` se arma campo a campo en vez de usar `toPrimitives()`?
+**Punto de control**: `pnpm test` · commit.
 
 ---
 
-## Fase 8 — Dominio de Tasks
+## Fase 8 — Dominio de la Venta
 
-Repite el patrón de Users. Lo interesante aquí son las **reglas del tablero**.
+Aquí está lo más interesante del proyecto.
 
-### 8.1 `TaskStatus`: el flujo Kanban vive en el value object (RN-009)
+### 8.1 Modelo propio, no compartido
+La venta **no** usa `EventId` ni `TicketPrice` del catálogo: tiene `EventReference`, `Money`
+y `SaleableEvent` ("lo que la venta necesita saber de un evento": aforo, inicio, precio,
+¿se puede vender?).
+
+### 8.2 El cupo: el agregado que impide sobrevender (ADR-012)
 ```ts
-const ALLOWED_TRANSITIONS: Record<TaskStatusValue, readonly TaskStatusValue[]> = {
-  TODO: ['IN_PROGRESS'],
-  IN_PROGRESS: ['TODO', 'IN_REVIEW'],
-  IN_REVIEW: ['IN_PROGRESS', 'DONE'],
-  DONE: [],                                   // estado final
-};
-
-canTransitionTo(next: TaskStatus): boolean {
-  return ALLOWED_TRANSITIONS[this.value].includes(next.value);
+// src/ticketing/domain/entities/ticket-allocation.ts (lo esencial)
+sell(quantity: Quantity, now = new Date()): Money {
+  if (!this._status.isOpen()) throw new SalesClosedError(this._eventId.value);              // RN-010
+  if (this._startsAt.getTime() <= now.getTime()) throw new EventAlreadyStartedError(...);   // RN-010
+  if (quantity.value > this.available) throw new NotEnoughTicketsError(quantity.value, this.available); // RN-009
+  this._sold += quantity.value;
+  this.record(new TicketsSold(this._eventId.value, quantity.value, this.available, now));
+  if (this.available === 0) this.record(new EventSoldOut(this._eventId.value, now));
+  return this._unitPrice.times(quantity.value);                                             // RN-015
 }
-requiresAssignee(): boolean {                 // RN-010
-  return this.value !== 'TODO';
+```
+> 💡 **¿Por qué un agregado aparte para el cupo?** Un agregado es la frontera de
+> consistencia: "vendidas ≤ aforo" debe vivir dentro de **uno**. Si contaras entradas
+> (`COUNT(*)`) antes de vender, dos compras simultáneas contarían lo mismo y venderían de más.
+
+### 8.3 La entrada
+`Ticket` guarda **solo el hash** de su código (`TicketCodeHash`), el titular, el precio
+pagado y el estado `ISSUED → USED | REFUNDED`:
+```ts
+checkIn(now = new Date()): void {                       // RN-013
+  if (this._status.isUsed()) throw new TicketAlreadyUsedError(this._id.value);
+  if (this._status.isRefunded()) throw new TicketRefundedError(this._id.value);
+  this._status = TicketStatus.used();
+  this._usedAt = now;
+  this.record(new TicketCheckedIn(this._id.value, this._eventId.value, now));
 }
 ```
 
-### 8.2 `Task`: la entidad protege las invariantes
-```ts
-changeStatus(next: TaskStatus, now = new Date()): void {
-  this.assertNotDone();                                         // RN-012
-  if (!this._status.canTransitionTo(next)) {
-    throw new InvalidStatusTransitionError(this._status.value, next.value); // RN-009
-  }
-  if (next.requiresAssignee() && this._assigneeId === null) {
-    throw new TaskRequiresAssigneeError(next.value);            // RN-010
-  }
-  const previous = this._status;
-  this._status = next;
-  this._updatedAt = now;
-  this.record(new TaskStatusChanged(this._id.value, previous.value, next.value, now));
-}
-```
-Escribe también `create()` (RN-008), `assignTo(member)` (RN-011, RN-012) y
-`releaseAssignee()` (RN-013: sin responsable y de vuelta a TODO).
+### 8.4 El código secreto
+`TicketCode.generate()` crea `XXXX-XXXX-XXXX` con azar criptográfico y sin letras ambiguas
+(0/O, 1/I/L). `toString()` y `toJSON()` devuelven `[REDACTED]` para que nunca acabe en un log.
 
-### 8.3 ¡No compartir modelos entre contextos!
-Tasks **no** usa `UserId`. Crea su propio `AssigneeId` y un `TeamMember` (id + ¿activo?).
-Para Tasks, un miembro solo es "alguien que puede o no recibir trabajo".
-
-**Referencia**: `src/tasks/domain/**` y sus `.spec.ts` (fíjate en la matriz de transiciones de `task-status.spec.ts`).
+**Referencia**: `src/ticketing/domain/**` y sus `.spec.ts`.
 
 **Preguntas de repaso**
-1. ¿Por qué la tabla de transiciones está en `TaskStatus` y no en el controlador?
-2. ¿Por qué Tasks tiene `AssigneeId` en vez de importar `UserId`?
-3. ¿Qué pasa con una tarea `IN_PROGRESS` cuando se libera su responsable, y por qué?
+1. ¿Por qué la venta tiene su propio `Money` en lugar de usar `TicketPrice`?
+2. ¿Por qué el cupo es un agregado distinto de la entrada?
+3. ¿Por qué `Ticket` no guarda el código en claro?
 
 ---
 
-## Fase 9 — Casos de uso de Tasks
+## Fase 9 — Casos de uso de la Venta
 
 | Tipo | Caso de uso | Qué orquesta |
 |---|---|---|
-| Command | `CreateTask` | crea en TODO |
-| Command | `AssignTask` | carga tarea + miembro (por el puerto `TeamMemberDirectory`) → `task.assignTo()` |
-| Command | `ChangeTaskStatus` | carga → `task.changeStatus()` |
-| Command | `ReleaseMemberTasks` | interno, lo dispara un evento (fase 14) |
-| Query | `GetTask`, `ListTasks` | leen y devuelven `TaskView` |
+| Command | `PurchaseTickets` | cupo (o abrirlo consultando el catálogo) → `sell` → guardar con reintentos → emitir entradas (solo hash) → releer cupo (¿cancelado?) → publicar |
+| Command | `CheckInTicket` | hash del código → buscar → `checkIn` → guardar |
+| Command | `CloseEventSales` | interno (lo dispara un evento): cerrar cupo + reembolsar no usadas |
+| Query | `GetTicket`, `GetEventAvailability` | vistas sin código ni hash |
 
-El puerto **propio** de Tasks para preguntar por miembros:
+Puertos propios de la venta: `TicketAllocationRepository`, `TicketRepository`,
+`EventCatalog` (para preguntar al catálogo) y `TicketCodeHasher`.
+
+### Reintentos ante compras simultáneas
 ```ts
-// src/tasks/domain/ports/team-member-directory.port.ts
-export const TEAM_MEMBER_DIRECTORY = Symbol('TEAM_MEMBER_DIRECTORY');
-export interface TeamMemberDirectory {
-  findById(id: AssigneeId): Promise<TeamMember | null>;
+for (let attempt = 1; ; attempt++) {
+  const allocation = (await this.allocations.findByEvent(eventId)) ?? (await this.openSales(eventId));
+  const total = allocation.sell(quantity);
+  try {
+    await this.allocations.save(allocation);       // falla si otra compra lo cambió (versión)
+    return { allocation, total };
+  } catch (error) {
+    if (!(error instanceof SalesConcurrentModificationError) || attempt >= PURCHASE_MAX_ATTEMPTS) throw error;
+    await backoff(attempt);                        // espera aleatoria: no volver a chocar a la vez
+  }
 }
 ```
-Para las pruebas usa `InMemoryTeamMemberDirectory`.
 
-**Referencia**: `src/tasks/application/**`.
+**Punto de control**: `pnpm test` (todas las reglas probadas **sin base de datos ni HTTP**) · commit.
 
-### Punto de control
-```bash
-pnpm test
-git commit -am "feat(tasks): domain and use cases"
-```
-> 🎉 En este punto tienes **toda la lógica de negocio funcionando y probada sin
-> base de datos ni HTTP**. Esa es la gran ventaja de la arquitectura hexagonal.
+> 🎉 Aquí ya tienes toda la lógica de negocio funcionando y probada. Esa es la gran ventaja
+> de la arquitectura hexagonal.
 
 ---
 
 ## Fase 10 — Configuración validada
 
-Reglas: todas las variables vienen del `.env`, se **validan al arrancar**, no hay
-valores por defecto peligrosos y **solo `src/config/` lee `process.env`**.
+Todas las variables vienen del `.env`, se **validan al arrancar**, sin valores por defecto,
+y **solo `src/config/` lee `process.env`**.
 
 ```ts
 // src/config/env.validation.ts (resumen)
 export class EnvironmentVariables {
   @IsIn(['development', 'production', 'test']) NODE_ENV: string;
   @IsInt() @Min(1) @Max(65535) PORT: number;
-  @IsString() @IsNotEmpty() DB_HOST: string;
-  // ... DB_PORT, DB_USER, DB_PASSWORD, DB_NAME
+  // ... DB_HOST, DB_PORT, DB_USER, DB_PASSWORD, DB_NAME
+  @IsString() @MinLength(32) TICKET_CODE_SECRET: string;        // secreto del HMAC
   @ValidateIf((env) => env.NODE_ENV === 'test') @IsString() @IsNotEmpty() DB_NAME_TEST?: string;
 }
-
-export function validateEnv(config: Record<string, unknown>): EnvironmentVariables {
-  const env = plainToInstance(EnvironmentVariables, config, { enableImplicitConversion: true });
-  const errors = validateSync(env);
-  if (errors.length > 0) throw new Error('Invalid environment configuration ...'); // nombra la variable, NUNCA su valor
-  return env;
-}
 ```
-
-Y **una sola** definición de la conexión para la app y para el CLI de migraciones:
-```ts
-// src/config/database.config.ts
-export function buildDataSourceOptions(s: DatabaseSettings): DataSourceOptions {
-  return {
-    type: 'postgres', host: s.host, port: s.port, username: s.username,
-    password: s.password, database: s.database,
-    entities: ORM_ENTITIES, migrations: MIGRATIONS,
-    synchronize: false,   // ¡SIEMPRE! El esquema lo crean las migraciones
-    logging: false,       // para que los parámetros (hashes) no lleguen a los logs
-  };
-}
-```
-
-**Referencia**: `src/config/*` (incluido `typeorm.data-source.ts`, el que usa el CLI).
+Y **una sola** definición de conexión para la app y el CLI (`buildDataSourceOptions`) con
+`synchronize: false` y `logging: false`.
 
 **Preguntas de repaso**
-1. ¿Qué pasa si arrancas sin `.env`? ¿Por qué es mejor que tener un valor por defecto?
-2. ¿Por qué app y CLI comparten `buildDataSourceOptions`?
-3. ¿Por qué `synchronize: false`?
+1. ¿Qué pasa si arrancas sin `TICKET_CODE_SECRET`? ¿Por qué es mejor que un valor por defecto?
+2. ¿Por qué app y CLI comparten la configuración?
 
 ---
 
 ## Fase 11 — Docker y migraciones
 
-### 11.1 `docker-compose.yml`
-Levanta PostgreSQL leyendo **el mismo `.env`**. Fíjate en:
-- `${DB_USER:?...}`: si falta la variable, Compose falla en vez de inventarla.
-- `"127.0.0.1:${DB_PORT}:5432"`: la base **solo** es accesible desde tu equipo.
-- `healthcheck`: permite `docker compose up -d --wait`.
+`docker-compose.yml` levanta PostgreSQL leyendo **el mismo `.env`**, solo en `127.0.0.1`.
 
-### 11.2 Migraciones
-Son SQL versionado con `up()` (aplicar) y `down()` (deshacer):
+Migraciones = SQL versionado con `up()` y `down()`:
 ```ts
-export class CreateUsersTable1759363200000 implements MigrationInterface {
-  name = 'CreateUsersTable1759363200000';
-  async up(q: QueryRunner) {
-    await q.query(`
-      CREATE TABLE "users" (
-        "id" uuid NOT NULL,
-        "email" varchar(254) NOT NULL,
-        ...
-        CONSTRAINT "pk_users" PRIMARY KEY ("id"),
-        CONSTRAINT "uq_users_email" UNIQUE ("email")      -- RN-002 garantizado por la BD
-      )`);
-  }
-  async down(q: QueryRunner) {
-    await q.query(`DROP TABLE "users"`);
-  }
-}
+await q.query(`
+  CREATE TABLE "ticket_allocations" (
+    "event_id" uuid NOT NULL, "capacity" integer NOT NULL, "sold" integer NOT NULL, ...
+    CONSTRAINT "pk_ticket_allocations" PRIMARY KEY ("event_id"),
+    CONSTRAINT "ck_ticket_allocations_sold" CHECK ("sold" >= 0 AND "sold" <= "capacity")   -- RN-009
+  )`);
+await q.query(`CREATE UNIQUE INDEX "uq_events_venue_starts_at" ON "events" (lower("venue"), "starts_at")`); // RN-006
 ```
-Regístralas en `src/database/migrations/index.ts` (lista explícita).
+> 💡 **¿Por qué restricciones en la base si el dominio ya valida?** Porque dos peticiones
+> **simultáneas** pueden pasar ambas la validación del código. Solo la base garantiza la
+> unicidad ante concurrencia; los `CHECK` son la última barrera.
 
-> 💡 **¿Por qué `UNIQUE` si el handler ya comprueba el email?** Porque dos registros
-> **simultáneos** pueden pasar ambos el `findByEmail`. Solo la base de datos puede
-> garantizar la unicidad ante la concurrencia.
-
-**Referencia**: `docker-compose.yml`, `src/database/migrations/*` (incluye la FK de
-`tasks.assignee_id`, los `CHECK` y la columna `version`).
-
-### Punto de control
+**Punto de control**:
 ```bash
-cp .env.example .env
-docker compose up -d --wait
-pnpm migration:run
-pnpm migration:revert && pnpm migration:run    # comprueba que down() funciona
-git commit -am "feat: docker and migrations"
+cp .env.example .env && docker compose up -d --wait
+pnpm migration:run && pnpm migration:revert && pnpm migration:run
 ```
 
 ---
 
-## Fase 12 — Persistencia real: TypeORM + mappers
+## Fase 12 — Persistencia real
 
 ### 12.1 La entidad ORM es OTRA clase
-Los decoradores `@Entity`/`@Column` **nunca** van en el dominio (falta grave de la rúbrica):
-
 ```ts
-// src/users/infrastructure/persistence/typeorm/user.orm-entity.ts
-@Entity({ name: 'users' })
-export class UserOrmEntity {
+@Entity({ name: 'tickets' })
+export class TicketOrmEntity {
   @PrimaryColumn({ type: 'uuid' }) id: string;
-  @Column({ type: 'varchar', length: 254 }) email: string;
-  @Column({ name: 'password_hash', type: 'varchar', length: 255 }) passwordHash: string;
+  @Column({ name: 'code_hash', type: 'varchar', length: 64 }) codeHash: string;   // nunca el código
   // ...
   @Column({ type: 'integer' }) version: number;
 }
 ```
+`@Entity`/`@Column` **nunca** van en el dominio (falta grave). El **mapper** traduce entre
+`Ticket` y `TicketOrmEntity` usando `toPrimitives()`/`fromPrimitives()`.
 
-### 12.2 El mapper traduce entre los dos mundos
+### 12.2 Bloqueo optimista: lo que hace imposible sobrevender
 ```ts
-export class UserMapper {
-  static toDomain(row: UserOrmEntity): User { return User.fromPrimitives({ ...campos de row }); }
-  static toPersistence(user: User): UserOrmEntity { /* copia user.toPrimitives() a un UserOrmEntity */ }
-}
-```
-
-### 12.3 El repositorio real con **bloqueo optimista**
-Problema: dos peticiones leen la misma tarea y la guardan después; la segunda borraría
-en silencio el cambio de la primera ("actualización perdida"). Solución: una columna
-`version` y guardar **solo si nadie la cambió desde que la leíste**:
-
-```ts
-async save(task: Task): Promise<void> {
-  const row = TaskMapper.toPersistence(task);
-  if (task.version === 0) {
-    await this.repository.insert({ ...row, version: 1 });           // nuevo
+async save(allocation: TicketAllocation): Promise<void> {
+  const row = TicketAllocationMapper.toPersistence(allocation);
+  if (allocation.version === 0) {
+    await this.repository.insert({ ...row, version: 1 });                 // nuevo
   } else {
-    const { id, version, ...changes } = row;
+    const { eventId, version, ...changes } = row;
     const result = await this.repository.update(
-      { id, version },                                              // WHERE id = ? AND version = ?
+      { eventId, version },                                               // WHERE ... AND version = ?
       { ...changes, version: version + 1 },
     );
-    if (!result.affected) throw new TaskConcurrentModificationError(id);   // 409
+    if (!result.affected) throw new SalesConcurrentModificationError(eventId); // otra compra ganó
   }
-  task.markAsPersisted();
+  allocation.markAsPersisted();
 }
 ```
-El repositorio de usuarios además traduce el error `23505` de PostgreSQL (violación de
-`uq_users_email`) a `UserEmailAlreadyInUseError`: eso es **traducir**, no duplicar reglas.
+> 💡 **El experimento que debes conocer**: si quitas `version` del `WHERE`, la prueba e2e
+> de 30 compradores para 5 plazas vende **16 entradas**. Con la condición, exactamente **5**.
 
-**Referencia**: `src/*/infrastructure/persistence/typeorm/*` y ADR-011.
-
-**Preguntas de repaso**
-1. ¿Por qué no poner `@Entity` en `User`?
-2. ¿Qué es una "actualización perdida" y cómo la evita la columna `version`?
-3. ¿Qué responde la API cuando ocurre un conflicto de versión?
+### 12.3 HMAC del código
+`HmacTicketCodeHasher` calcula `HMAC-SHA256(TICKET_CODE_SECRET, código)`. No usamos scrypt
+(eso es para contraseñas con poca entropía): el código ya es aleatorio y la puerta necesita
+un hash **determinista** para buscarlo. El secreto evita que alguien con una copia de la
+base pueda probar códigos.
 
 ---
 
 ## Fase 13 — El borde HTTP
 
-### 13.1 DTOs: validación nivel 1 (forma y tipos)
+### DTOs (validación nivel 1: forma y tipos)
 ```ts
-export class CreateUserDto {
-  @IsString() @IsNotEmpty() @MaxLength(200) name: string;
-  @IsString() @IsNotEmpty() @MaxLength(320) email: string;
-  @IsString() @IsNotEmpty() @MaxLength(200) password: string;
+export class PurchaseTicketsDto {
+  @IsUUID() eventId: string;
+  @IsInt() quantity: number;
+  @IsString() @IsNotEmpty() @MaxLength(200) holderName: string;
+  @IsString() @IsNotEmpty() @MaxLength(320) holderEmail: string;
 }
 ```
-> 💡 **Dos niveles de validación**: el DTO comprueba que sea un string de tamaño
-> razonable; el **dominio** decide si es un email válido o una contraseña fuerte.
-> Prueba: `"password":"abcdefgh"` pasa el DTO pero el dominio responde `USER_WEAK_PASSWORD`.
+> 💡 **Dos niveles**: el DTO rechaza `quantity: "2"` (texto); el **dominio** rechaza
+> `quantity: 11` (RN-008). Y como `forbidNonWhitelisted` está activo, el cliente **no puede
+> mandar `priceCents`** para pagar menos.
 
-`ValidationPipe` con `whitelist: true` y `forbidNonWhitelisted: true` → rechaza campos
-que no estén en el DTO (por ejemplo `"rol":"admin"`).
-
-### 13.2 Controlador delgado: solo buses
+### Controlador delgado
 ```ts
-@Controller('users')
-export class UsersController {
+@Controller('tickets')
+export class TicketsController {
   constructor(private readonly commandBus: CommandBus, private readonly queryBus: QueryBus) {}
 
   @Post()
-  create(@Body() dto: CreateUserDto) {
-    return this.commandBus.execute(new CreateUserCommand(dto.name, dto.email, dto.password));
-  }
-
-  @Get(':id')
-  findOne(@Param('id', parseIdPipe()) id: string) {
-    return this.queryBus.execute(new GetUserQuery(id));
+  purchase(@Body() dto: PurchaseTicketsDto) {
+    return this.commandBus.execute(new PurchaseTicketsCommand(dto.eventId, dto.quantity, dto.holderName, dto.holderEmail));
   }
 }
 ```
-Nada de repositorios, nada de reglas, nada de `if` de negocio.
 
-### 13.3 El filtro que traduce errores de dominio a HTTP (único)
+### Filtro único de errores de dominio
 ```ts
-export function httpStatusFor(kind: DomainErrorKind): HttpStatus {
-  switch (kind) {
-    case 'VALIDATION': return HttpStatus.BAD_REQUEST;   // 400
-    case 'NOT_FOUND':  return HttpStatus.NOT_FOUND;     // 404
-    case 'CONFLICT':   return HttpStatus.CONFLICT;      // 409
-    default: { const unreachable: never = kind; throw new Error(`Unmapped ${unreachable}`); }
-  }
+switch (kind) {
+  case 'VALIDATION': return HttpStatus.BAD_REQUEST;   // 400
+  case 'NOT_FOUND':  return HttpStatus.NOT_FOUND;     // 404
+  case 'CONFLICT':   return HttpStatus.CONFLICT;      // 409
+  default: { const unreachable: never = kind; throw new Error(`Unmapped ${unreachable}`); }
 }
 ```
-> 💡 El `never` hace que TypeScript **no compile** si algún día añades un `kind` sin mapearlo.
 
-### 13.4 El módulo: aquí se conectan puertos con adaptadores
+### El módulo conecta puertos con adaptadores
 ```ts
-@Module({
-  imports: [CqrsModule, TypeOrmModule.forFeature([UserOrmEntity])],
-  controllers: [UsersController],
-  providers: [
-    CreateUserHandler, DeactivateUserHandler, GetUserHandler,
-    { provide: USER_REPOSITORY, useClass: TypeOrmUserRepository },   // ← aquí se elige el adaptador
-    { provide: PASSWORD_HASHER, useClass: ScryptPasswordHasher },
-  ],
-})
-export class UsersModule {}
+providers: [
+  PurchaseTicketsHandler, /* ... */
+  { provide: TICKET_ALLOCATION_REPOSITORY, useClass: TypeOrmTicketAllocationRepository },
+  { provide: EVENT_CATALOG, useClass: CatalogEventCatalog },
+  { provide: TICKET_CODE_HASHER, inject: [ConfigService],
+    useFactory: (config) => new HmacTicketCodeHasher(config.get('TICKET_CODE_SECRET')) },
+]
 ```
 
-### 13.5 Arranque
-`src/app.setup.ts` aplica `helmet`, el `ValidationPipe` y los filtros (se reutiliza en
-las e2e). `src/main.ts` crea la app y escucha en `PORT`.
-
-**Referencia**: `src/*/infrastructure/http/*`, `src/shared/infrastructure/http/*`,
-`src/app.module.ts`, `src/app.setup.ts`, `src/main.ts`.
-
-### Punto de control
-```bash
-pnpm start:dev
-# Prueba con Thunder Client: POST /users, GET /users/:id, errores 400/404/409
-git commit -am "feat: HTTP adapters"
-```
+**Punto de control**: `pnpm start:dev` y prueba con Thunder Client (Etapa 4 de `EMPIEZA-AQUI.md`).
 
 ---
 
 ## Fase 14 — Comunicación entre contextos
 
-Dos mecanismos, ambos en `tasks/infrastructure` (nunca en el dominio):
-
-### 14.1 Consulta: anti-corruption layer (ACL)
-El adaptador del puerto `TeamMemberDirectory` pregunta a Users **por su API pública**
-(`GetUserQuery` por el `QueryBus`) y traduce la respuesta al modelo de Tasks:
+### Consulta (ACL)
 ```ts
-async findById(id: AssigneeId): Promise<TeamMember | null> {
+// src/ticketing/infrastructure/adapters/catalog-event-catalog.adapter.ts
+async findEvent(id: EventReference): Promise<SaleableEvent | null> {
   try {
-    const user: UserView = await this.queryBus.execute(new GetUserQuery(id.value));
-    return TeamMember.create({ id, active: user.status === 'ACTIVE' });
+    const event: EventView = await this.queryBus.execute(new GetEventQuery(id.value));
+    return SaleableEvent.create({
+      id, capacity: event.capacity, startsAt: new Date(event.startsAt),
+      unitPrice: Money.create(event.price.amountCents, event.price.currency),
+      onSale: event.status === 'SCHEDULED',
+    });
   } catch (error) {
-    if (error instanceof DomainException && error.code === 'USER_NOT_FOUND') return null;
+    if (error instanceof DomainException && error.code === 'EVENT_NOT_FOUND') return null;
     throw error;
   }
 }
 ```
 
-### 14.2 Reacción: un evento
-Cuando Users publica `UserDeactivated`, Tasks libera las tareas de esa persona:
+### Reacción a un evento de dominio
 ```ts
-@EventsHandler(UserDeactivated)
-export class ReleaseTasksOnUserDeactivatedListener implements IEventHandler<UserDeactivated> {
+@EventsHandler(EventCancelled)
+export class CloseSalesOnEventCancelledListener implements IEventHandler<EventCancelled> {
   constructor(private readonly commandBus: CommandBus) {}
-  async handle(event: UserDeactivated) {
-    await this.commandBus.execute(new ReleaseMemberTasksCommand(event.userId));
+  async handle(event: EventCancelled) {
+    await this.commandBus.execute(new CloseEventSalesCommand(event.eventId));
   }
 }
 ```
-> 💡 Users **no sabe** que Tasks existe. Si mañana se añade otro contexto que reaccione
-> al mismo evento, Users no cambia.
-
-**Referencia**: `src/tasks/infrastructure/adapters/*`, `src/tasks/infrastructure/event-handlers/*`.
-
-**Preguntas de repaso**
-1. ¿Por qué Tasks no consulta directamente la tabla `users`?
-2. ¿Por qué el listener vive en `infrastructure/` y no en `domain/`?
+> 💡 El catálogo **no sabe** que la venta existe. Y si una compra coincide con la
+> cancelación, la compra relee el cupo al final y reembolsa sus entradas (RN-014).
 
 ---
 
 ## Fase 15 — Pruebas e2e
 
-Prueban la aplicación **completa** contra **PostgreSQL real** con las **migraciones reales**.
+`global-setup.ts` crea la base de pruebas, la vacía y aplica las **migraciones reales**;
+`test-app.ts` arranca la app real escuchando en un puerto efímero.
 
-- `test/e2e/support/global-setup.ts`: fuerza `NODE_ENV=test`, crea `DB_NAME_TEST` si
-  no existe, la vacía y ejecuta las migraciones desde cero.
-- `test/e2e/support/test-app.ts`: arranca `AppModule` con el mismo `configureApp()` que `main.ts`.
-
+La prueba estrella:
 ```ts
-it('409: the email is unique regardless of casing (RN-002)', async () => {
-  await http().post('/users').send({ name: 'Ana', email: 'ana@x.io', password: 'secret123' }).expect(201);
-  const response = await http().post('/users').send({ name: 'Otra', email: 'ANA@X.IO', password: 'secret456' }).expect(409);
-  expect(response.body.code).toBe('USER_EMAIL_ALREADY_IN_USE');
+it('30 simultaneous buyers for 5 seats: exactly 5 tickets are sold, never more (RN-009)', async () => {
+  const eventId = await scheduleEvent(app, { capacity: 5 });
+  const responses = await Promise.all(
+    Array.from({ length: 30 }, (_, i) => purchase(app, eventId, 1, `fan${i}@mail.com`)),
+  );
+  expect(responses.filter((r) => r.status === 201)).toHaveLength(5);
+  // y en la base: 5 filas en tickets y sold = 5
 });
 ```
-Cubre siempre: éxito (200/201/204), 400, 404 y 409.
 
-**Referencia**: `test/e2e/*`, `test/jest-e2e.json`.
-
-### Punto de control
-```bash
-pnpm test:e2e
-git commit -am "test: e2e"
-```
+**Punto de control**: `pnpm test:e2e`.
 
 ---
 
 ## Fase 16 — Prueba de arquitectura
 
-Convierte la checklist de la rúbrica en una prueba automática: lee los archivos y
-falla si, por ejemplo, un archivo de `domain/` importa `@nestjs`:
-
+Convierte la checklist de la rúbrica en una prueba que lee el código:
 ```ts
 it('domain/ never imports frameworks', () => {
   const offenders = domainFiles.flatMap((file) =>
-    importsOf(file)
-      .filter((spec) => /^(@nestjs\/|typeorm|class-validator)/.test(spec))
-      .map((spec) => `${file} -> ${spec}`),
-  );
+    importsOf(file).filter((spec) => /^(@nestjs\/|typeorm|class-validator)/.test(spec)));
   expect(offenders).toEqual([]);
 });
 ```
-> 💡 **Haz el experimento**: añade `import { Injectable } from '@nestjs/common'` en
-> `email.ts`, ejecuta `pnpm test` y mira cómo falla. Luego quítalo.
-
-**Referencia**: `test/architecture/architecture.spec.ts`.
+> 💡 **Experimento**: añade `import { Injectable } from '@nestjs/common'` en `quantity.ts`,
+> ejecuta `pnpm test` y mira cómo falla. Luego quítalo.
 
 ---
 
 ## Fase 17 — Documentación y autoevaluación
 
 - `README.md`: instalación desde cero, comandos, endpoints, arquitectura.
-- `docs/business-rules/`: reglas con IDs estables (RN-001…) → archivo que las implementa → prueba.
+- `docs/business-rules/`: RN-001…RN-015 → archivo que las implementa → prueba.
 - `docs/decisions/`: ADRs (contexto → decisión → **porqué** → consecuencias → alternativas).
-- `docs/technical-debt.md`: lo que **no** está resuelto, con honestidad.
+- `docs/technical-debt.md`: lo que no está resuelto, con honestidad.
 
-Antes de entregar, comprueba (lo hace la prueba de arquitectura, pero apréndetelo):
 ```bash
-grep -rn "@nestjs\|typeorm\|class-validator" src/*/domain/   # debe estar vacío
-grep -rn "process.env" src | grep -v "^src/config/"          # debe estar vacío
-grep -rn "synchronize" src                                   # solo false
+grep -rn "@nestjs\|typeorm\|class-validator" src/*/domain/   # vacío
+grep -rn "process.env" src | grep -v "^src/config/"          # vacío
 pnpm test && pnpm test:e2e
 ```
 
@@ -986,65 +656,71 @@ pnpm test && pnpm test:e2e
 
 ## Fase 18 — Preguntas del evaluador
 
-Practica responderlas **en voz alta**.
+Practícalas **en voz alta**.
 
 **1. ¿Qué es la arquitectura hexagonal y cómo la aplicaste?**
-> El dominio está en el centro y no depende de nada técnico. Define puertos (interfaces
-> como `UserRepository`) en `domain/ports`, y la infraestructura los implementa con
-> adaptadores (`TypeOrmUserRepository`, `InMemoryUserRepository`). Los módulos de Nest
-> deciden qué adaptador usar. Las dependencias apuntan hacia dentro y lo verifica una
-> prueba automática.
+> El dominio está en el centro y no depende de nada técnico. Define puertos (como
+> `TicketAllocationRepository`) y la infraestructura los implementa con adaptadores
+> (TypeORM y en memoria). Los módulos de Nest eligen el adaptador. Una prueba automática
+> verifica que las dependencias apunten hacia adentro.
 
-**2. ¿Por qué hay dos repositorios para el mismo puerto?**
-> El de memoria permite probar los casos de uso sin base de datos y demuestra que el
-> puerto es intercambiable. El de TypeORM es el que usa la app real.
+**2. ¿Cómo garantizas que no se vendan más entradas que el aforo?**
+> Con tres capas. El agregado `TicketAllocation` rechaza vender más de lo disponible. Su
+> columna `version` hace bloqueo optimista: si dos compras leyeron el mismo cupo, solo una
+> puede guardar y la otra relee y reintenta. Y la base tiene un `CHECK sold <= capacity`.
+> Lo pruebo con 30 compras simultáneas para 5 plazas: se venden exactamente 5. Sin el
+> bloqueo, la misma prueba vende 16.
 
-**3. ¿Dónde están las reglas de negocio? Muéstrame una.**
-> En el dominio. Ejemplo: `Task.changeStatus` rechaza saltar columnas (RN-009) y mover
-> una tarea sin responsable fuera de TODO (RN-010). El controlador no tiene ni un `if` de negocio.
+**3. ¿Por qué el cupo es un agregado y no un conteo de entradas?**
+> Porque un agregado es la frontera de consistencia. Contar entradas antes de vender falla
+> con compras simultáneas: las dos cuentan lo mismo. El cupo concentra la regla en un solo objeto versionado.
 
-**4. ¿Qué es un value object? ¿Cómo garantizas que no sea inválido?**
-> Un valor sin identidad que se compara por valor. Constructor privado + factory
-> `create()` que normaliza y valida; si algo falla lanza un error de dominio. Por eso no
-> puede existir un `Email` inválido.
+**4. ¿Qué es un value object? Muéstrame uno.**
+> Un valor sin identidad, inmutable, que se compara por valor. `Venue`: constructor
+> privado, `create()` normaliza y valida, y `equals()` compara sin distinguir mayúsculas.
 
 **5. ¿Por qué `fromPrimitives` vuelve a validar?**
-> Porque los datos de la base podrían estar corruptos; no queremos agregados inválidos
-> circulando. Además se valida la versión (≥ 1) y las invariantes.
+> Porque los datos de la base podrían estar corruptos; no queremos agregados inválidos.
 
 **6. ¿Cómo implementaste CQRS?**
 > Commands para escribir y Queries para leer, cada uno con su handler y su carpeta. Los
 > controladores solo hacen `commandBus.execute` o `queryBus.execute`.
 
-**7. ¿Cómo se convierte un error de dominio en una respuesta HTTP?**
-> El dominio lanza `DomainException` con `code` y `kind`. Un único filtro,
-> `DomainExceptionFilter`, traduce `VALIDATION→400`, `NOT_FOUND→404`, `CONFLICT→409`.
-> El dominio no conoce HTTP.
+**7. ¿Cómo se convierte un error de dominio en HTTP?**
+> El dominio lanza `DomainException` con `code` y `kind`. Un único filtro traduce
+> `VALIDATION→400`, `NOT_FOUND→404`, `CONFLICT→409`. El dominio no conoce HTTP.
 
-**8. ¿Cuándo se publican los eventos y por qué?**
-> Después de guardar. Si se publicaran antes y el guardado fallara, otros contextos
-> reaccionarían a un hecho que no ocurrió.
+**8. ¿Cuándo se publican los eventos de dominio?**
+> Después de guardar. Si se publicaran antes y el guardado fallara, la venta reaccionaría
+> a una cancelación que nunca ocurrió.
 
-**9. ¿Cómo se comunican Users y Tasks sin acoplarse?**
-> Tasks tiene su propio puerto `TeamMemberDirectory`; un adaptador (ACL) consulta Users
-> por `GetUserQuery` y traduce a `TeamMember`. Y un listener en `tasks/infrastructure`
-> reacciona al evento `UserDeactivated`. Ningún dominio importa al otro.
+**9. ¿Cómo se comunican el Catálogo y la Venta sin acoplarse?**
+> La venta tiene su propio puerto `EventCatalog`; un adaptador (ACL) consulta el catálogo
+> por `GetEventQuery` y traduce a `SaleableEvent`. Y un oyente en `ticketing/infrastructure`
+> reacciona a `EventCancelled`. Ningún dominio importa al otro.
 
-**10. ¿Cómo proteges las contraseñas?**
-> Política en el dominio, hash scrypt con sal, solo se guarda el hash, las vistas se
-> construyen sin él, `toJSON()` devuelve `[REDACTED]` y TypeORM no registra consultas.
+**10. ¿Cómo proteges los códigos de entrada?**
+> Son aleatorios (azar criptográfico), se muestran una sola vez y solo guardo su HMAC con
+> un secreto del servidor. Ninguna vista, evento ni log los contiene.
 
-**11. ¿Por qué no usas `synchronize: true`?**
-> Porque cambia el esquema automáticamente, sin control ni historial, y puede perder
-> datos. Uso migraciones versionadas con `up()` y `down()`.
+**11. ¿Por qué HMAC y no bcrypt/scrypt como con las contraseñas?**
+> Las contraseñas tienen poca entropía y necesitan un hash lento con sal. El código ya es
+> aleatorio (~59 bits) y la puerta necesita buscarlo, así que el hash debe ser determinista.
+> El secreto del HMAC impide que alguien con una copia de la base pruebe códigos.
 
-**12. ¿Qué pasa si dos personas modifican la misma tarea al mismo tiempo?**
-> Bloqueo optimista: cada fila tiene `version`; solo se guarda si la versión no cambió
-> desde que se leyó. Si cambió, el segundo recibe 409 `TASK_CONCURRENT_MODIFICATION`.
+**12. ¿Qué pasa si se cancela un evento mientras alguien compra?**
+> La cancelación cierra el cupo antes de buscar entradas; la compra guarda sus entradas
+> antes de releer el cupo. Así, al menos uno ve al otro: o la cancelación reembolsa esas
+> entradas, o la compra ve el cupo cerrado y reembolsa las suyas. Hay una prueba que falla
+> si quito esa compensación.
 
-**13. ¿Qué no está resuelto?**
-> Autenticación, rate limiting, paginación, outbox para eventos y una carrera residual
-> entre asignar y desactivar. Está documentado en `docs/technical-debt.md`.
+**13. ¿Por qué no `synchronize: true`?**
+> Cambia el esquema automáticamente, sin historial y con riesgo de perder datos. Además mi
+> índice único es funcional (`lower(venue)`), algo que solo puedo expresar en una migración.
+
+**14. ¿Qué no está resuelto?**
+> Autenticación, pasarela de pago, rate limiting, outbox para eventos y la compra sin
+> transacción común. Está en `docs/technical-debt.md`.
 
 ---
 
@@ -1052,13 +728,13 @@ Practica responderlas **en voz alta**.
 
 | Día | Fases | Meta |
 |---|---|---|
-| 1 | 0–2 | Entender las ideas; proyecto y shared kernel |
-| 2 | 3–4 | Value objects y entidad `User` con pruebas |
-| 3 | 5–7 | Puertos, adaptadores en memoria y casos de uso de Users |
-| 4 | 8–9 | Dominio y casos de uso de Tasks |
-| 5 | 10–12 | Configuración, Docker, migraciones y TypeORM |
+| 1 | 0–2 | Ideas; proyecto y shared kernel |
+| 2 | 3–4 | Value objects y agregado `Event` con pruebas |
+| 3 | 5–7 | Puertos, adaptador en memoria y casos de uso del Catálogo |
+| 4 | 8–9 | Cupo, entradas y casos de uso de la Venta |
+| 5 | 10–12 | Configuración, Docker, migraciones, TypeORM y bloqueo optimista |
 | 6 | 13–14 | HTTP y comunicación entre contextos |
 | 7 | 15–18 | e2e, arquitectura, documentación y ensayo de preguntas |
 
-**Truco final**: cuando termines una fase, cierra la guía e intenta explicar en voz alta
-qué hace cada archivo que creaste. Si te trabas, ahí es donde tienes que repasar.
+**Truco final**: al terminar cada fase, cierra la guía y explica en voz alta qué hace cada
+archivo que creaste. Donde te trabes, ahí tienes que repasar.

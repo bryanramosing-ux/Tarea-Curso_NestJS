@@ -1,8 +1,8 @@
 # Catálogo de errores
 
-Los `code` son **estables**: forman parte del contrato con los clientes y no cambian
-aunque cambie el mensaje. El dominio solo declara el `kind`; la traducción a HTTP
-ocurre únicamente en `src/shared/infrastructure/http/domain-exception.filter.ts`.
+Los `code` son **estables**: forman parte del contrato con los clientes. El dominio solo
+declara el `kind`; la traducción a HTTP ocurre únicamente en
+`src/shared/infrastructure/http/domain-exception.filter.ts`.
 
 | `kind` | HTTP |
 |---|---|
@@ -10,57 +10,63 @@ ocurre únicamente en `src/shared/infrastructure/http/domain-exception.filter.ts
 | `NOT_FOUND` | 404 Not Found |
 | `CONFLICT` | 409 Conflict |
 
-Formato de respuesta de un error de dominio:
+Formato de toda respuesta de error:
 
 ```json
-{ "statusCode": 409, "code": "TASK_INVALID_STATUS_TRANSITION", "message": "A task cannot move from IN_PROGRESS to DONE", "path": "/tasks/…/status", "timestamp": "…" }
+{ "statusCode": 409, "code": "TICKET_NOT_ENOUGH_AVAILABLE", "message": "Requested 2 ticket(s) but only 1 available", "path": "/tickets", "timestamp": "…" }
 ```
 
 ## Borde HTTP (no son errores de dominio)
 
-Lo traduce `HttpExceptionFilter` con la misma forma `{ statusCode, code, message, path, timestamp }`.
+Los traduce `HttpExceptionFilter` con la misma forma.
 
 | Código | HTTP | Cuándo |
 |---|---|---|
-| `REQUEST_VALIDATION_FAILED` | 400 | El DTO no cumple tipos/tamaños, trae propiedades no permitidas, o el `:id` de la ruta no es un UUID (`message` es la lista de problemas) |
+| `REQUEST_VALIDATION_FAILED` | 400 | El DTO no cumple tipos/tamaños, trae propiedades no permitidas, o un `:id` no es UUID (`message` es la lista de problemas) |
 | `BAD_REQUEST` | 400 | El cuerpo no es JSON válido |
 | `ROUTE_NOT_FOUND` | 404 | La ruta o el método no existen |
 | *(sin código)* | 413 | El cuerpo supera 100 kB |
 
-## Contexto Users
+## Contexto Catálogo
 
 | Código | Kind | HTTP | Regla |
 |---|---|---|---|
-| `USER_INVALID_ID` | VALIDATION | 400 | — |
-| `USER_INVALID_EMAIL` | VALIDATION | 400 | RN-001 |
-| `USER_INVALID_NAME` | VALIDATION | 400 | RN-003 |
-| `USER_WEAK_PASSWORD` | VALIDATION | 400 | RN-004 |
-| `USER_INVALID_PASSWORD_HASH` | VALIDATION | 400 | RN-004 (dato persistido corrupto) |
-| `USER_INVALID_STATUS` | VALIDATION | 400 | — |
-| `USER_INVALID_TIMESTAMPS` | VALIDATION | 400 | — (dato persistido corrupto) |
-| `USER_NOT_FOUND` | NOT_FOUND | 404 | — |
-| `USER_EMAIL_ALREADY_IN_USE` | CONFLICT | 409 | RN-002 |
-| `USER_ALREADY_INACTIVE` | CONFLICT | 409 | RN-005 |
-| `USER_CONCURRENT_MODIFICATION` | CONFLICT | 409 | Otra operación modificó el usuario a la vez (bloqueo optimista, ADR-011) |
+| `EVENT_INVALID_ID` | VALIDATION | 400 | — |
+| `EVENT_INVALID_NAME` | VALIDATION | 400 | RN-001 |
+| `EVENT_INVALID_VENUE` | VALIDATION | 400 | RN-002 |
+| `EVENT_INVALID_START` | VALIDATION | 400 | RN-003 (fecha inválida o sin zona horaria) |
+| `EVENT_START_IN_PAST` | VALIDATION | 400 | RN-003 |
+| `EVENT_INVALID_CAPACITY` | VALIDATION | 400 | RN-004 |
+| `EVENT_INVALID_PRICE` | VALIDATION | 400 | RN-005 |
+| `EVENT_INVALID_STATUS` | VALIDATION | 400 | — |
+| `EVENT_INVARIANT_VIOLATION` | VALIDATION | 400 | Dato persistido corrupto |
+| `EVENT_NOT_FOUND` | NOT_FOUND | 404 | — |
+| `EVENT_SLOT_TAKEN` | CONFLICT | 409 | RN-006 |
+| `EVENT_ALREADY_CANCELLED` | CONFLICT | 409 | RN-007 |
+| `EVENT_ALREADY_STARTED` | CONFLICT | 409 | RN-007 |
+| `EVENT_CONCURRENT_MODIFICATION` | CONFLICT | 409 | Bloqueo optimista (ADR-011) |
 
-## Contexto Tasks
+## Contexto Venta de entradas
 
 | Código | Kind | HTTP | Regla |
 |---|---|---|---|
-| `TASK_INVALID_ID` | VALIDATION | 400 | — |
-| `TASK_INVALID_TITLE` | VALIDATION | 400 | RN-006 |
-| `TASK_INVALID_DESCRIPTION` | VALIDATION | 400 | RN-007 |
-| `TASK_INVALID_STATUS` | VALIDATION | 400 | RN-009 |
-| `TASK_INVALID_PRIORITY` | VALIDATION | 400 | RN-014 |
-| `TASK_INVALID_ASSIGNEE_ID` | VALIDATION | 400 | — |
-| `TASK_INVARIANT_VIOLATION` | VALIDATION | 400 | RN-010 (dato persistido corrupto) |
-| `TASK_NOT_FOUND` | NOT_FOUND | 404 | — |
-| `TASK_ASSIGNEE_NOT_FOUND` | NOT_FOUND | 404 | RN-011 |
-| `TASK_ASSIGNEE_INACTIVE` | CONFLICT | 409 | RN-011 |
-| `TASK_INVALID_STATUS_TRANSITION` | CONFLICT | 409 | RN-009 |
-| `TASK_REQUIRES_ASSIGNEE` | CONFLICT | 409 | RN-010 |
-| `TASK_ALREADY_DONE` | CONFLICT | 409 | RN-012 |
-| `TASK_CONCURRENT_MODIFICATION` | CONFLICT | 409 | Otra operación modificó la tarea a la vez (bloqueo optimista, ADR-011) |
+| `TICKET_INVALID_ID` | VALIDATION | 400 | — |
+| `TICKET_INVALID_EVENT_ID` | VALIDATION | 400 | — |
+| `TICKET_INVALID_QUANTITY` | VALIDATION | 400 | RN-008 |
+| `TICKET_INVALID_HOLDER_NAME` | VALIDATION | 400 | RN-011 |
+| `TICKET_INVALID_HOLDER_EMAIL` | VALIDATION | 400 | RN-011 |
+| `TICKET_INVALID_CODE` | VALIDATION | 400 | RN-012 |
+| `TICKET_INVALID_MONEY` | VALIDATION | 400 | RN-015 |
+| `TICKET_INVALID_CODE_HASH`, `TICKET_INVALID_STATUS`, `TICKET_INVALID_SALES_STATUS`, `TICKET_INVALID_EVENT_DATA`, `TICKET_INVARIANT_VIOLATION` | VALIDATION | 400 | Datos persistidos o recibidos del catálogo corruptos |
+| `TICKET_EVENT_NOT_FOUND` | NOT_FOUND | 404 | — |
+| `TICKET_NOT_FOUND` | NOT_FOUND | 404 | — |
+| `TICKET_SALES_CLOSED` | CONFLICT | 409 | RN-010, RN-014 |
+| `TICKET_EVENT_ALREADY_STARTED` | CONFLICT | 409 | RN-010 |
+| `TICKET_NOT_ENOUGH_AVAILABLE` | CONFLICT | 409 | RN-009 |
+| `TICKET_ALREADY_USED` | CONFLICT | 409 | RN-013 |
+| `TICKET_REFUNDED` | CONFLICT | 409 | RN-013 |
+| `TICKET_SALES_CONCURRENT_MODIFICATION` | CONFLICT | 409 | Muchas compras simultáneas agotaron los reintentos (ADR-011) |
+| `TICKET_CONCURRENT_MODIFICATION` | CONFLICT | 409 | Bloqueo optimista (ADR-011) |
 
 ## Comunes
 

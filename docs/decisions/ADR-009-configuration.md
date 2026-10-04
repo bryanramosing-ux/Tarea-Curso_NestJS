@@ -13,6 +13,8 @@ hacer que la aplicación arranque contra un destino equivocado sin que nadie lo 
 - Con `NODE_ENV=test` se usa `DB_NAME_TEST`; el e2e se niega a ejecutarse si coincide
   con `DB_NAME`.
 - `docker-compose.yml` lee el mismo `.env` y usa `${VAR:?}` para fallar si falta algo.
+- Los secretos de la aplicación (como `TICKET_CODE_SECRET`, mínimo 32 caracteres) también
+  se validan al arrancar y llegan a los adaptadores por `ConfigService` (factoría del módulo).
 
 ## Por qué
 - Fallar al arrancar es más barato que diagnosticar un comportamiento incorrecto en ejecución.
