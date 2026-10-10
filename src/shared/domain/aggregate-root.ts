@@ -2,8 +2,8 @@ import { DomainErrorKind, DomainException } from './domain-exception';
 import { DomainEvent } from './domain-event';
 
 export class InvalidAggregateVersionError extends DomainException {
-  constructor(version: unknown) {
-    super('INVALID_AGGREGATE_VERSION', DomainErrorKind.VALIDATION, `"${String(version)}" is not a valid aggregate version`);
+  constructor() {
+    super('INVALID_AGGREGATE_VERSION', DomainErrorKind.VALIDATION, 'Aggregate version must be a non-negative integer');
   }
 }
 
@@ -22,7 +22,7 @@ export abstract class AggregateRoot {
 
   protected constructor(version: number) {
     if (!Number.isInteger(version) || version < 0) {
-      throw new InvalidAggregateVersionError(version);
+      throw new InvalidAggregateVersionError();
     }
     this._version = version;
   }
@@ -30,7 +30,7 @@ export abstract class AggregateRoot {
   /** Un agregado reconstruido desde persistencia siempre tiene versión >= 1. */
   protected static persistedVersion(version: number): number {
     if (!Number.isInteger(version) || version < 1) {
-      throw new InvalidAggregateVersionError(version);
+      throw new InvalidAggregateVersionError();
     }
     return version;
   }

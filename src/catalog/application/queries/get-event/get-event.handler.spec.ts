@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { Event } from '../../../domain/entities/event';
 import { EventNotFoundError } from '../../../domain/errors/event.errors';
 import { Capacity } from '../../../domain/value-objects/capacity';
@@ -15,7 +16,7 @@ describe('GetEventHandler', () => {
     const events = new InMemoryEventRepository();
     const event = Event.schedule(
       {
-        id: EventId.generate(),
+        id: EventId.create(randomUUID()),
         name: EventName.create('Rock en el Parque'),
         venue: Venue.create('Estadio Nacional'),
         startsAt: EventStart.create('2027-03-20T21:00:00Z'),
@@ -41,7 +42,7 @@ describe('GetEventHandler', () => {
 
   it('throws NOT_FOUND for an unknown event', async () => {
     await expect(
-      new GetEventHandler(new InMemoryEventRepository()).execute(new GetEventQuery(EventId.generate().value)),
+      new GetEventHandler(new InMemoryEventRepository()).execute(new GetEventQuery(EventId.create(randomUUID()).value)),
     ).rejects.toBeInstanceOf(EventNotFoundError);
   });
 });

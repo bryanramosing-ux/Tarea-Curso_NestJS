@@ -1,6 +1,8 @@
 import { DomainErrorKind } from '../../../shared/domain/domain-exception';
 import {
   EventAlreadyStartedError,
+  EventNotCancelledError,
+  HolderTicketLimitExceededError,
   NotEnoughTicketsError,
   SalesClosedError,
   TicketingInvariantViolationError,
@@ -12,7 +14,7 @@ import { EventReference } from '../value-objects/event-reference';
 import { Money } from '../value-objects/money';
 import { Quantity } from '../value-objects/quantity';
 import { SaleableEvent } from '../value-objects/saleable-event';
-import { TicketAllocation, TicketAllocationPrimitives } from './ticket-allocation';
+import { MAX_TICKETS_PER_HOLDER, TicketAllocation, TicketAllocationPrimitives } from './ticket-allocation';
 
 const NOW = new Date('2027-01-10T10:00:00.000Z');
 const STARTS = new Date('2027-03-20T21:00:00.000Z');
@@ -46,7 +48,7 @@ describe('TicketAllocation aggregate', () => {
     it('reserves seats, returns the total and records TicketsSold', () => {
       const allocation = TicketAllocation.open(saleable(), NOW);
 
-      const total = allocation.sell(q(2), NOW);
+      const total = allocation.sell(q(2), 0, NOW);
 
       expect(total.equals(Money.create(9000, 'PEN'))).toBe(true);
       expect(allocation).toMatchObject({ sold: 2, available: 3 });
@@ -55,7 +57,7 @@ describe('TicketAllocation aggregate', () => {
 
     it('records EventSoldOut when the last seat is sold', () => {
       const allocation = TicketAllocation.open(saleable({ capacity: 2 }), NOW);
-      allocation.sell(q(2), NOW);
+      allocation.sell(q(2), 0, NOW);
       expect(allocation.pullDomainEvents()).toEqual([
         new TicketsSold(EVENT.value, 2, 0, NOW),
         new EventSoldOut(EVENT.value, NOW),
@@ -64,9 +66,9 @@ describe('TicketAllocation aggregate', () => {
 
     it('never sells more than the capacity', () => {
       const allocation = TicketAllocation.open(saleable({ capacity: 3 }), NOW);
-      allocation.sell(q(2), NOW);
-      expect(() => allocation.sell(q(2), NOW)).toThrow(NotEnoughTicketsError);
-      expect(() => allocation.sell(q(2), NOW)).toThrow(
+      allocation.sell(q(2), 0, NOW);
+      expect(() => allocation.sell(q(2), 0, NOW)).toThrow(NotEnoughTicketsError);
+      expect(() => allocation.sell(q(2), 0, NOW)).toThrow(
         expect.objectContaining({ code: 'TICKET_NOT_ENOUGH_AVAILABLE', kind: DomainErrorKind.CONFLICT }),
       );
       expect(allocation.sold).toBe(2);
@@ -74,14 +76,30 @@ describe('TicketAllocation aggregate', () => {
 
     it('does not sell once the event has started', () => {
       const allocation = TicketAllocation.open(saleable(), NOW);
-      expect(() => allocation.sell(q(1), STARTS)).toThrow(EventAlreadyStartedError);
+      expect(() => allocation.sell(q(1), 0, STARTS)).toThrow(EventAlreadyStartedError);
       expect(allocation.acceptsSales(STARTS)).toBe(false);
+    });
+
+    it('caps the active tickets of one holder per event (RN-008)', () => {
+      const allocation = TicketAllocation.open(saleable({ capacity: 100 }), NOW);
+      expect(MAX_TICKETS_PER_HOLDER).toBe(10);
+      expect(() => allocation.sell(q(1), 10, NOW)).toThrow(HolderTicketLimitExceededError);
+      expect(() => allocation.sell(q(3), 8, NOW)).toThrow(
+        expect.objectContaining({ code: 'TICKET_HOLDER_LIMIT_EXCEEDED', kind: DomainErrorKind.CONFLICT }),
+      );
+      expect(allocation.sold).toBe(0);
+      expect(allocation.sell(q(2), 8, NOW).amountCents).toBe(9000);
+    });
+
+    it('rejects a nonsensical count of held tickets', () => {
+      const allocation = TicketAllocation.open(saleable(), NOW);
+      expect(() => allocation.sell(q(1), -1, NOW)).toThrow(TicketingInvariantViolationError);
     });
 
     it('does not sell when sales are closed', () => {
       const allocation = TicketAllocation.open(saleable(), NOW);
       allocation.close(NOW);
-      expect(() => allocation.sell(q(1), NOW)).toThrow(SalesClosedError);
+      expect(() => allocation.sell(q(1), 0, NOW)).toThrow(SalesClosedError);
     });
   });
 
@@ -95,10 +113,25 @@ describe('TicketAllocation aggregate', () => {
     });
   });
 
+  describe('closedFor (RN-014, cancelled event that never sold)', () => {
+    it('creates an allocation that is already closed and records SalesClosed', () => {
+      const allocation = TicketAllocation.closedFor(saleable({ onSale: false }), NOW);
+      expect(allocation).toMatchObject({ sold: 0, version: 0 });
+      expect(allocation.status.value).toBe('CLOSED');
+      expect(allocation.acceptsSales(NOW)).toBe(false);
+      expect(() => allocation.sell(q(1), 0, NOW)).toThrow(SalesClosedError);
+      expect(allocation.pullDomainEvents()).toEqual([new SalesClosed(EVENT.value, NOW)]);
+    });
+
+    it('refuses to close the sales of an event that is still scheduled', () => {
+      expect(() => TicketAllocation.closedFor(saleable(), NOW)).toThrow(EventNotCancelledError);
+    });
+  });
+
   describe('toPrimitives / fromPrimitives', () => {
     const storedRow = (): TicketAllocationPrimitives => {
       const allocation = TicketAllocation.open(saleable(), NOW);
-      allocation.sell(q(2), NOW);
+      allocation.sell(q(2), 0, NOW);
       return { ...allocation.toPrimitives(), version: 4 };
     };
 

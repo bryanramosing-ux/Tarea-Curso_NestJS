@@ -40,7 +40,8 @@ export interface ScheduleEventProps {
 
 /**
  * Agregado Event (contexto Catálogo): un concierto, obra o conferencia.
- * Solo cambia mediante métodos con intención de negocio:
+ * Solo cambia mediante métodos con intención de negocio. La hora actual
+ * (`now`) la recibe siempre del caso de uso, que la pide al puerto Clock:
  *  - RN-003 solo se programa a futuro;
  *  - RN-007 solo se cancela si está programado y no ha empezado.
  */
@@ -62,7 +63,7 @@ export class Event extends AggregateRoot {
   }
 
   /** Programa un evento nuevo (RN-003). Emite EventScheduled. */
-  static schedule(props: ScheduleEventProps, now: Date = new Date()): Event {
+  static schedule(props: ScheduleEventProps, now: Date): Event {
     if (!props.startsAt.isAfter(now)) {
       throw new EventStartInPastError();
     }
@@ -101,7 +102,7 @@ export class Event extends AggregateRoot {
   }
 
   /** RN-007: solo un evento programado y que no ha empezado puede cancelarse. */
-  cancel(now: Date = new Date()): void {
+  cancel(now: Date): void {
     if (this._status.isCancelled()) {
       throw new EventAlreadyCancelledError(this._id.value);
     }
@@ -113,7 +114,7 @@ export class Event extends AggregateRoot {
     this.record(new EventCancelled(this._id.value, now));
   }
 
-  hasStarted(now: Date = new Date()): boolean {
+  hasStarted(now: Date): boolean {
     return !this._startsAt.isAfter(now);
   }
 

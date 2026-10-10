@@ -1,6 +1,10 @@
 import { AggregateRoot } from '../../../shared/domain/aggregate-root';
 import {
+  CheckInClosedError,
+  CheckInNotOpenError,
   TicketAlreadyUsedError,
+  TicketEventCancelledError,
+  TicketForAnotherEventError,
   TicketingInvariantViolationError,
   TicketRefundedError,
 } from '../errors/ticketing.errors';
@@ -11,9 +15,16 @@ import { EventReference } from '../value-objects/event-reference';
 import { HolderEmail } from '../value-objects/holder-email';
 import { HolderName } from '../value-objects/holder-name';
 import { Money } from '../value-objects/money';
+import { SaleableEvent } from '../value-objects/saleable-event';
 import { TicketCodeHash } from '../value-objects/ticket-code-hash';
 import { TicketId } from '../value-objects/ticket-id';
 import { TicketStatus } from '../value-objects/ticket-status';
+
+const HOUR_MS = 3_600_000;
+/** RN-016: las puertas abren 12 h antes del inicio del evento... */
+export const CHECK_IN_OPENS_HOURS_BEFORE_START = 12;
+/** ...y el acceso se cierra 24 h después del inicio. */
+export const CHECK_IN_CLOSES_HOURS_AFTER_START = 24;
 
 export interface TicketPrimitives {
   id: string;
@@ -43,7 +54,9 @@ export interface IssueTicketProps {
  * Agregado Ticket (contexto Venta de entradas): una entrada concreta.
  *  - RN-012 solo conoce el HASH de su código secreto;
  *  - RN-013 se usa una sola vez; una entrada reembolsada no es válida;
- *  - RN-014 se reembolsa si el evento se cancela.
+ *  - RN-014 se reembolsa si el evento se cancela;
+ *  - RN-016 solo da acceso a SU evento, si no está cancelado y dentro del
+ *    horario de puertas.
  */
 export class Ticket extends AggregateRoot {
   private constructor(
@@ -63,7 +76,7 @@ export class Ticket extends AggregateRoot {
     this.assertInvariants();
   }
 
-  static issue(props: IssueTicketProps, now: Date = new Date()): Ticket {
+  static issue(props: IssueTicketProps, now: Date): Ticket {
     const ticket = new Ticket(
       props.id,
       props.eventId,
@@ -97,13 +110,32 @@ export class Ticket extends AggregateRoot {
     );
   }
 
-  /** RN-013: registra la entrada en la puerta. Una entrada solo sirve una vez. */
-  checkIn(now: Date = new Date()): void {
+  /**
+   * RN-013 + RN-016: registra la entrada en la puerta del evento `event`.
+   * Solo sirve una vez, solo para su evento, si este no fue cancelado y dentro
+   * del horario de puertas (desde 12 h antes hasta 24 h después del inicio).
+   */
+  checkIn(event: SaleableEvent, now: Date): void {
+    if (!event.id.equals(this._eventId)) {
+      throw new TicketForAnotherEventError();
+    }
     if (this._status.isUsed()) {
       throw new TicketAlreadyUsedError(this._id.value);
     }
     if (this._status.isRefunded()) {
       throw new TicketRefundedError(this._id.value);
+    }
+    if (event.isCancelled()) {
+      throw new TicketEventCancelledError(this._eventId.value);
+    }
+    const startsAt = event.startsAt.getTime();
+    const opensAt = new Date(startsAt - CHECK_IN_OPENS_HOURS_BEFORE_START * HOUR_MS);
+    const closesAt = new Date(startsAt + CHECK_IN_CLOSES_HOURS_AFTER_START * HOUR_MS);
+    if (now.getTime() < opensAt.getTime()) {
+      throw new CheckInNotOpenError(opensAt);
+    }
+    if (now.getTime() > closesAt.getTime()) {
+      throw new CheckInClosedError(closesAt);
     }
     this._status = TicketStatus.used();
     this._usedAt = now;
@@ -112,7 +144,7 @@ export class Ticket extends AggregateRoot {
   }
 
   /** RN-014: reembolsa una entrada no usada (idempotente si ya estaba reembolsada). */
-  refund(now: Date = new Date()): void {
+  refund(now: Date): void {
     if (this._status.isRefunded()) {
       return;
     }

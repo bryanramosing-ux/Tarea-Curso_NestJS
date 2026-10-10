@@ -1,19 +1,16 @@
-import { generateUuid, isValidUuid } from '../../../shared/domain/uuid';
+import { isValidUuid } from '../../../shared/domain/uuid';
 import { InvalidEventIdError } from '../errors/event.errors';
 
+/** Identidad de un evento (UUID). Los nuevos los genera el puerto IdGenerator. */
 export class EventId {
   private constructor(public readonly value: string) {}
 
   static create(value: string): EventId {
     const normalized = typeof value === 'string' ? value.trim().toLowerCase() : '';
     if (!isValidUuid(normalized)) {
-      throw new InvalidEventIdError(String(value));
+      throw new InvalidEventIdError();
     }
     return new EventId(normalized);
-  }
-
-  static generate(): EventId {
-    return new EventId(generateUuid());
   }
 
   equals(other: EventId): boolean {

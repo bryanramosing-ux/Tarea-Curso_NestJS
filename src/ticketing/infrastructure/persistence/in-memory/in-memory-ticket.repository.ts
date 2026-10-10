@@ -2,6 +2,7 @@ import { Ticket, TicketPrimitives } from '../../../domain/entities/ticket';
 import { TicketConcurrentModificationError } from '../../../domain/errors/ticketing.errors';
 import { TicketRepository } from '../../../domain/ports/ticket.repository';
 import { EventReference } from '../../../domain/value-objects/event-reference';
+import { HolderEmail } from '../../../domain/value-objects/holder-email';
 import { TicketCodeHash } from '../../../domain/value-objects/ticket-code-hash';
 import { TicketId } from '../../../domain/value-objects/ticket-id';
 import { TicketStatusValue } from '../../../domain/value-objects/ticket-status';
@@ -30,11 +31,19 @@ export class InMemoryTicketRepository implements TicketRepository {
     return row ? Ticket.fromPrimitives({ ...row }) : null;
   }
 
-  async findIssuedByEvent(eventId: EventReference): Promise<Ticket[]> {
+  async findIssuedByEvent(eventId: EventReference, limit: number): Promise<Ticket[]> {
     return [...this.rows.values()]
       .filter((row) => row.eventId === eventId.value && row.status === TicketStatusValue.ISSUED)
       .sort((a, b) => a.purchasedAt.getTime() - b.purchasedAt.getTime() || a.id.localeCompare(b.id))
+      .slice(0, limit)
       .map((row) => Ticket.fromPrimitives({ ...row }));
+  }
+
+  async countActiveByEventAndHolder(eventId: EventReference, holderEmail: HolderEmail): Promise<number> {
+    return [...this.rows.values()].filter(
+      (row) =>
+        row.eventId === eventId.value && row.holderEmail === holderEmail.value && row.status !== TicketStatusValue.REFUNDED,
+    ).length;
   }
 
   /** Utilidad de pruebas: inspeccionar lo persistido. */

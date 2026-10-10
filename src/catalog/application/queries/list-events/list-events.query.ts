@@ -1,9 +1,16 @@
 import { Query } from '@nestjs/cqrs';
-import { EventView } from '../../views/event.view';
+import { EventPage } from '../../views/event.view';
 
-/** Caso de uso de lectura: cartelera, opcionalmente filtrada por estado. */
-export class ListEventsQuery extends Query<EventView[]> {
-  constructor(public readonly status?: string) {
+export const DEFAULT_PAGE_SIZE = 20;
+export const MAX_PAGE_SIZE = 100;
+
+/** Caso de uso de lectura: cartelera paginada, opcionalmente filtrada por estado. */
+export class ListEventsQuery extends Query<EventPage> {
+  constructor(
+    public readonly status?: string,
+    public readonly limit: number = DEFAULT_PAGE_SIZE,
+    public readonly offset: number = 0,
+  ) {
     super();
   }
 }

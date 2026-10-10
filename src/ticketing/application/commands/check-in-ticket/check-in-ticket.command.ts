@@ -4,9 +4,12 @@ export interface CheckInTicketResult {
   id: string;
 }
 
-/** Caso de uso de escritura: validar una entrada en la puerta con su código. */
+/** Caso de uso de escritura: validar una entrada con su código en la puerta de un evento concreto. */
 export class CheckInTicketCommand extends Command<CheckInTicketResult> {
-  constructor(public readonly code: string) {
+  constructor(
+    public readonly eventId: string,
+    public readonly code: string,
+  ) {
     super();
   }
 }

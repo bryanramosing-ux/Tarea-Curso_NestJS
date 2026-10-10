@@ -57,14 +57,27 @@ describe('Migrations (e2e, PostgreSQL real)', () => {
     );
 
     const indexes = (
-      await dataSource.query(`SELECT indexname FROM pg_indexes WHERE tablename IN ('events', 'tickets')`)
+      await dataSource.query(`SELECT indexname FROM pg_indexes WHERE tablename IN ('events', 'tickets', 'ticket_allocations')`)
     ).map((row: { indexname: string }) => row.indexname);
     expect(indexes).toEqual(
-      expect.arrayContaining(['uq_events_venue_starts_at', 'ix_events_status_starts_at', 'ix_tickets_event_status']),
+      expect.arrayContaining([
+        'uq_events_venue_starts_at',
+        'ix_events_status_starts_at',
+        'ix_tickets_event_status',
+        'ix_tickets_event_holder',
+        'ix_ticket_allocations_open',
+      ]),
     );
   });
 
+  const holderIndex = async (): Promise<number> =>
+    (await dataSource.query(`SELECT COUNT(*)::int AS count FROM pg_indexes WHERE indexname = 'ix_tickets_event_holder'`))[0]
+      .count;
+
   it('down() reverts every migration and up() re-applies them', async () => {
+    await dataSource.undoLastMigration({ transaction: 'each' });
+    expect(await holderIndex()).toBe(0);
+    expect(await tables()).toEqual(['events', 'ticket_allocations', 'tickets']);
     await dataSource.undoLastMigration({ transaction: 'each' });
     expect(await tables()).toEqual(['events']);
     await dataSource.undoLastMigration({ transaction: 'each' });
@@ -74,7 +87,9 @@ describe('Migrations (e2e, PostgreSQL real)', () => {
     expect(applied.map((migration) => migration.name)).toEqual([
       'CreateEventsTable1759536000000',
       'CreateTicketingTables1759536060000',
+      'AddHolderAndOpenSalesIndexes1759536120000',
     ]);
+    expect(await holderIndex()).toBe(1);
     expect(await tables()).toEqual(['events', 'ticket_allocations', 'tickets']);
   });
 });

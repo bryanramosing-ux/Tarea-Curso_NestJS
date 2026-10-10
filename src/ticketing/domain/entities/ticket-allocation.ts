@@ -1,6 +1,8 @@
 import { AggregateRoot } from '../../../shared/domain/aggregate-root';
 import {
   EventAlreadyStartedError,
+  EventNotCancelledError,
+  HolderTicketLimitExceededError,
   NotEnoughTicketsError,
   SalesClosedError,
   TicketingInvariantViolationError,
@@ -13,6 +15,9 @@ import { Money } from '../value-objects/money';
 import { Quantity } from '../value-objects/quantity';
 import { SaleableEvent } from '../value-objects/saleable-event';
 import { SalesStatus } from '../value-objects/sales-status';
+
+/** RN-008: máximo de entradas activas (emitidas o usadas) por titular y evento. */
+export const MAX_TICKETS_PER_HOLDER = 10;
 
 export interface TicketAllocationPrimitives {
   eventId: string;
@@ -30,6 +35,7 @@ export interface TicketAllocationPrimitives {
 /**
  * Agregado TicketAllocation (contexto Venta de entradas): el cupo de entradas
  * de UN evento. Es el guardián del aforo:
+ *  - RN-008 un mismo titular no acumula más de MAX_TICKETS_PER_HOLDER entradas;
  *  - RN-009 nunca se venden más entradas que el aforo (también ante compras
  *    simultáneas, gracias al bloqueo optimista de su versión);
  *  - RN-010 no se vende si la venta está cerrada o el evento ya empezó;
@@ -52,11 +58,26 @@ export class TicketAllocation extends AggregateRoot {
   }
 
   /** Abre la venta de un evento del catálogo (RN-010: debe estar a la venta). */
-  static open(event: SaleableEvent, now: Date = new Date()): TicketAllocation {
+  static open(event: SaleableEvent, now: Date): TicketAllocation {
     if (!event.isOnSale()) {
       throw new SalesClosedError(event.id.value);
     }
     return new TicketAllocation(event.id, event.capacity, 0, event.unitPrice, event.startsAt, SalesStatus.open(), now, now, 0);
+  }
+
+  /**
+   * RN-014: cupo YA CERRADO para un evento cancelado que nunca vendió nada.
+   * Guardarlo ocupa la clave primaria del evento: si una primera compra intenta
+   * abrir la venta a la vez, una de las dos operaciones choca y se reintenta,
+   * así nunca queda una venta abierta para un evento cancelado.
+   */
+  static closedFor(event: SaleableEvent, now: Date): TicketAllocation {
+    if (!event.isCancelled()) {
+      throw new EventNotCancelledError(event.id.value);
+    }
+    const allocation = new TicketAllocation(event.id, event.capacity, 0, event.unitPrice, event.startsAt, SalesStatus.closed(), now, now, 0);
+    allocation.record(new SalesClosed(event.id.value, now));
+    return allocation;
   }
 
   static fromPrimitives(primitives: TicketAllocationPrimitives): TicketAllocation {
@@ -73,13 +94,25 @@ export class TicketAllocation extends AggregateRoot {
     );
   }
 
-  /** RN-009 + RN-010 + RN-015. Devuelve el total a cobrar. */
-  sell(quantity: Quantity, now: Date = new Date()): Money {
+  /**
+   * RN-008 + RN-009 + RN-010 + RN-015. Devuelve el total a cobrar.
+   * `heldByHolder` son las entradas activas que el titular ya tiene para este
+   * evento; el caso de uso las cuenta DESPUÉS de leer el cupo, y como toda
+   * compra modifica el cupo, el bloqueo optimista detecta una compra
+   * simultánea del mismo titular y obliga a recontar.
+   */
+  sell(quantity: Quantity, heldByHolder: number, now: Date): Money {
     if (!this._status.isOpen()) {
       throw new SalesClosedError(this._eventId.value);
     }
     if (this._startsAt.getTime() <= now.getTime()) {
       throw new EventAlreadyStartedError(this._eventId.value);
+    }
+    if (!Number.isInteger(heldByHolder) || heldByHolder < 0) {
+      throw new TicketingInvariantViolationError('tickets held by the holder must be a non-negative integer');
+    }
+    if (heldByHolder + quantity.value > MAX_TICKETS_PER_HOLDER) {
+      throw new HolderTicketLimitExceededError(MAX_TICKETS_PER_HOLDER, heldByHolder);
     }
     if (quantity.value > this.available) {
       throw new NotEnoughTicketsError(quantity.value, this.available);
@@ -94,7 +127,7 @@ export class TicketAllocation extends AggregateRoot {
   }
 
   /** RN-014: cierra la venta (idempotente). */
-  close(now: Date = new Date()): void {
+  close(now: Date): void {
     if (!this._status.isOpen()) {
       return;
     }
@@ -104,7 +137,7 @@ export class TicketAllocation extends AggregateRoot {
   }
 
   /** La venta está abierta y el evento aún no ha empezado (puede estar agotado). */
-  acceptsSales(now: Date = new Date()): boolean {
+  acceptsSales(now: Date): boolean {
     return this._status.isOpen() && this._startsAt.getTime() > now.getTime();
   }
 

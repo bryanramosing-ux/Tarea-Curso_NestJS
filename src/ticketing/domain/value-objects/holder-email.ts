@@ -8,7 +8,7 @@ export class HolderEmail {
   private constructor(public readonly value: string) {}
 
   static create(value: string): HolderEmail {
-    const normalized = typeof value === 'string' ? value.trim().toLowerCase() : '';
+    const normalized = typeof value === 'string' ? value.normalize('NFC').trim().toLowerCase() : '';
     // La longitud se comprueba ANTES de la expresión regular (evita ReDoS con entradas enormes).
     if (normalized.length === 0 || normalized.length > MAX_LENGTH || !EMAIL_PATTERN.test(normalized)) {
       throw new InvalidHolderEmailError();

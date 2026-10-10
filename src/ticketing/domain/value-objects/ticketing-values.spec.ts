@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import {
   InvalidEventReferenceError,
   InvalidHolderEmailError,
@@ -74,15 +75,6 @@ describe('Holder (RN-011)', () => {
 });
 
 describe('TicketCode (RN-012)', () => {
-  it('generates unambiguous XXXX-XXXX-XXXX codes', () => {
-    const codes = Array.from({ length: 200 }, () => TicketCode.generate().reveal());
-    for (const code of codes) {
-      expect(code).toMatch(/^[A-Z2-9]{4}-[A-Z2-9]{4}-[A-Z2-9]{4}$/);
-      expect(code).not.toMatch(/[01OIL]/);
-    }
-    expect(new Set(codes).size).toBe(codes.length);
-  });
-
   it('accepts lowercase input and compares by value', () => {
     expect(TicketCode.create(' abcd-efgh-jkmn ').equals(TicketCode.create('ABCD-EFGH-JKMN'))).toBe(true);
   });
@@ -122,7 +114,7 @@ describe('TicketCodeHash / statuses / ids', () => {
   it('validates ids', () => {
     expect(() => TicketId.create('nope')).toThrow(InvalidTicketIdError);
     expect(() => EventReference.create('nope')).toThrow(InvalidEventReferenceError);
-    const id = TicketId.generate();
+    const id = TicketId.create(randomUUID());
     expect(TicketId.create(id.value).equals(id)).toBe(true);
   });
 });

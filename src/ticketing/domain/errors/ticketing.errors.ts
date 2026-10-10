@@ -1,14 +1,15 @@
 import { DomainErrorKind, DomainException } from '../../../shared/domain/domain-exception';
 
+/** Los mensajes de validación nunca repiten el valor recibido (no se refleja la entrada del cliente). */
 export class InvalidTicketIdError extends DomainException {
-  constructor(value: string) {
-    super('TICKET_INVALID_ID', DomainErrorKind.VALIDATION, `"${value}" is not a valid ticket id`);
+  constructor() {
+    super('TICKET_INVALID_ID', DomainErrorKind.VALIDATION, 'Ticket id must be a UUID');
   }
 }
 
 export class InvalidEventReferenceError extends DomainException {
-  constructor(value: string) {
-    super('TICKET_INVALID_EVENT_ID', DomainErrorKind.VALIDATION, `"${value}" is not a valid event id`);
+  constructor() {
+    super('TICKET_INVALID_EVENT_ID', DomainErrorKind.VALIDATION, 'Event id must be a UUID');
   }
 }
 
@@ -57,14 +58,14 @@ export class InvalidTicketCodeHashError extends DomainException {
 }
 
 export class InvalidTicketStatusError extends DomainException {
-  constructor(value: string) {
-    super('TICKET_INVALID_STATUS', DomainErrorKind.VALIDATION, `"${value}" is not a valid ticket status`);
+  constructor() {
+    super('TICKET_INVALID_STATUS', DomainErrorKind.VALIDATION, 'Ticket status must be ISSUED, USED or REFUNDED');
   }
 }
 
 export class InvalidSalesStatusError extends DomainException {
-  constructor(value: string) {
-    super('TICKET_INVALID_SALES_STATUS', DomainErrorKind.VALIDATION, `"${value}" is not a valid sales status`);
+  constructor() {
+    super('TICKET_INVALID_SALES_STATUS', DomainErrorKind.VALIDATION, 'Sales status must be OPEN or CLOSED');
   }
 }
 
@@ -108,6 +109,17 @@ export class EventAlreadyStartedError extends DomainException {
   }
 }
 
+/** RN-008: tope de entradas activas por titular (email) y evento. */
+export class HolderTicketLimitExceededError extends DomainException {
+  constructor(limit: number, alreadyHeld: number) {
+    super(
+      'TICKET_HOLDER_LIMIT_EXCEEDED',
+      DomainErrorKind.CONFLICT,
+      `A holder can have at most ${limit} active ticket(s) per event; this email already has ${alreadyHeld}`,
+    );
+  }
+}
+
 /** RN-009 */
 export class NotEnoughTicketsError extends DomainException {
   constructor(requested: number, available: number) {
@@ -130,6 +142,41 @@ export class TicketAlreadyUsedError extends DomainException {
 export class TicketRefundedError extends DomainException {
   constructor(id: string) {
     super('TICKET_REFUNDED', DomainErrorKind.CONFLICT, `Ticket "${id}" was refunded and is no longer valid`);
+  }
+}
+
+/** RN-016: la entrada es de otro evento (no se admite en esta puerta). */
+export class TicketForAnotherEventError extends DomainException {
+  constructor() {
+    super('TICKET_WRONG_EVENT', DomainErrorKind.CONFLICT, 'This ticket belongs to a different event');
+  }
+}
+
+/** RN-016: el evento de la entrada fue cancelado; la entrada no da acceso aunque aún no se haya reembolsado. */
+export class TicketEventCancelledError extends DomainException {
+  constructor(eventId: string) {
+    super('TICKET_EVENT_CANCELLED', DomainErrorKind.CONFLICT, `Event "${eventId}" was cancelled; its tickets are not valid`);
+  }
+}
+
+/** RN-016: todavía no se abren las puertas. */
+export class CheckInNotOpenError extends DomainException {
+  constructor(opensAt: Date) {
+    super('TICKET_CHECK_IN_NOT_OPEN', DomainErrorKind.CONFLICT, `Check-in for this event opens at ${opensAt.toISOString()}`);
+  }
+}
+
+/** RN-016: el plazo de acceso del evento ya terminó. */
+export class CheckInClosedError extends DomainException {
+  constructor(closedAt: Date) {
+    super('TICKET_CHECK_IN_CLOSED', DomainErrorKind.CONFLICT, `Check-in for this event closed at ${closedAt.toISOString()}`);
+  }
+}
+
+/** RN-014: solo se cierra la venta (y se reembolsa) de un evento cancelado. */
+export class EventNotCancelledError extends DomainException {
+  constructor(eventId: string) {
+    super('TICKET_EVENT_NOT_CANCELLED', DomainErrorKind.CONFLICT, `Event "${eventId}" is not cancelled; its sales cannot be closed`);
   }
 }
 

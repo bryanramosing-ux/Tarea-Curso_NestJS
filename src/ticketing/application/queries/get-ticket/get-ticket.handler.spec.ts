@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { Ticket } from '../../../domain/entities/ticket';
 import { TicketNotFoundError } from '../../../domain/errors/ticketing.errors';
 import { EventReference } from '../../../domain/value-objects/event-reference';
@@ -15,7 +16,7 @@ describe('GetTicketHandler', () => {
     const tickets = new InMemoryTicketRepository();
     const ticket = Ticket.issue(
       {
-        id: TicketId.generate(),
+        id: TicketId.create(randomUUID()),
         eventId: EventReference.create('7c9e6679-7425-40de-944b-e07fc1f90ae7'),
         holderName: HolderName.create('Ana Pérez'),
         holderEmail: HolderEmail.create('ana@mail.com'),
@@ -43,7 +44,7 @@ describe('GetTicketHandler', () => {
 
   it('throws NOT_FOUND for an unknown ticket', async () => {
     await expect(
-      new GetTicketHandler(new InMemoryTicketRepository()).execute(new GetTicketQuery(TicketId.generate().value)),
+      new GetTicketHandler(new InMemoryTicketRepository()).execute(new GetTicketQuery(TicketId.create(randomUUID()).value)),
     ).rejects.toBeInstanceOf(TicketNotFoundError);
   });
 });

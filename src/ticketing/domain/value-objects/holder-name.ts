@@ -8,7 +8,7 @@ export class HolderName {
   private constructor(public readonly value: string) {}
 
   static create(value: string): HolderName {
-    const normalized = typeof value === 'string' ? value.trim().replace(/\s+/g, ' ') : '';
+    const normalized = typeof value === 'string' ? value.normalize('NFC').trim().replace(/\s+/g, ' ') : '';
     if (normalized.length < MIN_LENGTH || normalized.length > MAX_LENGTH) {
       throw new InvalidHolderNameError();
     }

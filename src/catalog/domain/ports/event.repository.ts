@@ -8,6 +8,10 @@ export const EVENT_REPOSITORY = Symbol('EVENT_REPOSITORY');
 
 export interface EventSearchCriteria {
   status?: EventStatus;
+  /** Máximo de eventos a devolver (paginación). */
+  limit: number;
+  /** Cuántos eventos saltarse desde el principio del orden (paginación). */
+  offset: number;
 }
 
 /**
@@ -16,7 +20,8 @@ export interface EventSearchCriteria {
  *    error de negocio le corresponde al caso de uso.
  *  - `save` aplica bloqueo optimista (EventConcurrentModificationError) y
  *    respeta la unicidad recinto + hora (EventSlotTakenError, RN-006).
- *  - Los listados se ordenan por fecha de inicio ascendente.
+ *  - Los listados se ordenan por fecha de inicio ascendente (y por id, para
+ *    que el orden sea estable entre páginas).
  */
 export interface EventRepository {
   save(event: Event): Promise<void>;

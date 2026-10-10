@@ -17,7 +17,7 @@ export class TicketStatus {
   static create(value: string): TicketStatus {
     const normalized = typeof value === 'string' ? value.trim().toUpperCase() : '';
     if (!VALID_VALUES.includes(normalized)) {
-      throw new InvalidTicketStatusError(String(value));
+      throw new InvalidTicketStatusError();
     }
     return new TicketStatus(normalized as TicketStatusValue);
   }
