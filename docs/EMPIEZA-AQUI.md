@@ -25,11 +25,15 @@ ETAPA 7  Preparar la defensa ........................ 1–2 horas
 - [ ] Lee esto:
   - **Qué es**: una API REST de **venta de entradas para eventos**. Hay un **catálogo**
     de eventos (conciertos, obras…) y una **venta** que nunca sobrevende el aforo, valida
-    cada entrada en la puerta una sola vez y reembolsa si el evento se cancela.
+    cada entrada en la puerta una sola vez (solo para su evento y en horario de puertas)
+    y reembolsa si el evento se cancela. Las operaciones del personal (organizador y
+    puerta) piden una **clave de API**.
   - **Cómo está hecho**: NestJS + TypeScript con arquitectura hexagonal, DDD y CQRS,
     PostgreSQL en Docker, migraciones, pruebas unitarias y e2e.
   - **Dónde está**: `https://github.com/bryanramosing-ux/Tarea-Curso_NestJS`, rama
-    `claude/determined-pascal-319bv9` (hoy es la rama por defecto y la única).
+    `claude/determined-pascal-319bv9` (la rama por defecto). Las correcciones de la
+    auditoría de 2026-10-10 están en la rama `claude/sharp-hawking-gpa346` hasta que se
+    fusionen en la rama por defecto.
 - [ ] Ten a mano los documentos clave (los abrirás más adelante):
 
 | Documento | Para qué |
@@ -39,7 +43,7 @@ ETAPA 7  Preparar la defensa ........................ 1–2 horas
 | `docs/guia-paso-a-paso.md` | Aprender a construirlo tú mismo, fase por fase |
 | `docs/rubric-self-assessment.md` | Cómo cumple cada criterio de la rúbrica |
 | `docs/audit-checklist.md` | Auditoría de seguridad y bugs |
-| `docs/business-rules/business-rules.md` | Las 15 reglas de negocio (RN-001…RN-015) |
+| `docs/business-rules/business-rules.md` | Las 16 reglas de negocio (RN-001…RN-016) |
 | `docs/decisions/` | Por qué se tomó cada decisión (ADRs) |
 
 ---
@@ -113,6 +117,10 @@ Copy-Item .env.example .env
 🍎 `cp .env.example .env`
 - [ ] Existe el archivo `.env` (no lo subas nunca a GitHub; ya está en `.gitignore`).
 
+> Las claves de ejemplo (`ORGANIZER_API_KEY`, `GATE_API_KEY`) sirven para probar en tu
+> computadora. En producción la app **no arranca** con los valores de ejemplo: habría que
+> generar unos propios (ver la sección 3 del README).
+
 ### 3.4 Levantar la base de datos
 Con **Docker Desktop abierto**:
 ```powershell
@@ -124,7 +132,7 @@ docker compose up -d --wait
 ```powershell
 pnpm migration:run
 ```
-- [ ] Aparecen **2** mensajes `... has been executed successfully`.
+- [ ] Aparecen **3** mensajes `... has been executed successfully`.
 
 ### 3.6 Arrancar la API
 ```powershell
@@ -142,29 +150,41 @@ Abre **otra** terminal en la carpeta del proyecto (en VS Code: *Terminal → Nue
 pnpm test
 pnpm test:e2e
 ```
-- [ ] `pnpm test` → `Tests: 189 passed`
-- [ ] `pnpm test:e2e` → `Tests: 44 passed`
+- [ ] `pnpm test` → `Tests: 252 passed`
+- [ ] `pnpm test:e2e` → `Tests: 68 passed`
 
 ### 4.2 Probar a mano (Thunder Client)
 En VS Code → icono del rayo → **New Request**. Para los que tienen cuerpo: pestaña **Body → JSON**.
 
-| # | Método y URL | Cuerpo | Debe responder |
-|---|---|---|---|
-| 1 | `POST http://localhost:3000/events` | `{"name":"Rock en el Parque","venue":"Estadio Nacional","startsAt":"2027-03-20T21:00:00Z","capacity":3,"priceCents":4500,"currency":"PEN"}` | **201** `{id}` → copia el id (`ID_EVENTO`) |
-| 2 | Repite el 1 cambiando `"venue":"estadio nacional"` | — | **409** `EVENT_SLOT_TAKEN` (mismo recinto, misma hora) |
-| 3 | `GET http://localhost:3000/tickets/availability/ID_EVENTO` | — | **200** `available: 3` |
-| 4 | `POST http://localhost:3000/tickets` | `{"eventId":"ID_EVENTO","quantity":2,"holderName":"Ana Pérez","holderEmail":"ana@mail.com"}` | **201** con 2 entradas y `total` 9000. Copia el `id` y el `code` de la primera (`ENTRADA_1`, `CODIGO_1`) y el `id` de la segunda (`ENTRADA_2`) |
-| 5 | Repite el 4 | igual | **409** `TICKET_NOT_ENOUGH_AVAILABLE` (solo queda 1) |
-| 6 | Repite el 4 con `"quantity":11` | — | **400** `TICKET_INVALID_QUANTITY` |
-| 7 | `GET http://localhost:3000/tickets/ENTRADA_1` | — | **200**, **sin** el código |
-| 8 | `POST http://localhost:3000/tickets/check-in` | `{"code":"CODIGO_1"}` | **200** (Ana entra) |
-| 9 | Repite el 8 | igual | **409** `TICKET_ALREADY_USED` |
-| 10 | `POST http://localhost:3000/events/ID_EVENTO/cancel` | — | **204** |
-| 11 | `GET http://localhost:3000/tickets/ENTRADA_2` | — | **200** `status: REFUNDED` (la usada, `ENTRADA_1`, sigue `USED`) |
+Algunas peticiones necesitan una **clave** (columna "Clave"). En Thunder Client, pestaña
+**Headers**, añade `Authorization` con uno de estos valores (son los de `.env.example`):
+- 🎟️ **organizador**: `Bearer change-me-organizer-key-0123456789abcdef`
+- 🚪 **puerta**: `Bearer change-me-gate-key-0123456789abcdef0123`
 
-> La fecha del paso 1 debe ser **futura** y llevar zona horaria (`Z` al final).
+Para que el check-in funcione, el evento tiene que empezar **dentro de las próximas 12
+horas** (las puertas abren 12 h antes). En el paso 1 pon como `startsAt` la hora actual
+**en UTC** más 2 horas, terminada en `Z` (por ejemplo, si en UTC son las 15:10 del
+2026-10-10, usa `2026-10-10T17:10:00Z`).
 
-- [ ] Las 11 respuestas coinciden.
+| # | Método y URL | Clave | Cuerpo | Debe responder |
+|---|---|---|---|---|
+| 1 | `POST http://localhost:3000/events` | 🎟️ | `{"name":"Rock en el Parque","venue":"Estadio Nacional","startsAt":"<HOY+2h>Z","capacity":3,"priceCents":4500,"currency":"PEN"}` | **201** `{id}` → copia el id (`ID_EVENTO`) |
+| 1b | Repite el 1 **sin** clave | — | igual | **401** `UNAUTHORIZED` |
+| 2 | Repite el 1 cambiando `"venue":"estadio nacional"` | 🎟️ | — | **409** `EVENT_SLOT_TAKEN` (mismo recinto, misma hora) |
+| 3 | `GET http://localhost:3000/tickets/availability/ID_EVENTO` | — | — | **200** `available: 3` |
+| 4 | `POST http://localhost:3000/tickets` | — | `{"eventId":"ID_EVENTO","quantity":2,"holderName":"Ana Pérez","holderEmail":"ana@mail.com"}` | **201** con 2 entradas y `total` 9000. Copia el `id` y el `code` de la primera (`ENTRADA_1`, `CODIGO_1`) y el `id` de la segunda (`ENTRADA_2`) |
+| 5 | Repite el 4 con `"holderEmail":"luis@mail.com"` | — | — | **409** `TICKET_NOT_ENOUGH_AVAILABLE` (solo queda 1) |
+| 6 | Repite el 4 con `"quantity":11` | — | — | **400** `TICKET_INVALID_QUANTITY` |
+| 7 | `GET http://localhost:3000/tickets/ENTRADA_1` | 🚪 | — | **200**, **sin** el código (sin clave: **401**, porque tiene datos personales) |
+| 8 | `POST http://localhost:3000/tickets/check-in` | 🚪 | `{"eventId":"ID_EVENTO","code":"CODIGO_1"}` | **200** (Ana entra) |
+| 9 | Repite el 8 | 🚪 | igual | **409** `TICKET_ALREADY_USED` |
+| 10 | `POST http://localhost:3000/events/ID_EVENTO/cancel` | 🎟️ | — | **204** (con la clave 🚪: **403** `FORBIDDEN`) |
+| 11 | `GET http://localhost:3000/tickets/ENTRADA_2` | 🚪 | — | **200** `status: REFUNDED` (la usada, `ENTRADA_1`, sigue `USED`) |
+
+> La fecha del paso 1 debe ser **futura**, llevar zona horaria (`Z` al final) y, para
+> probar el check-in, estar a menos de 12 horas.
+
+- [ ] Las respuestas coinciden.
 
 > Si algo no coincide, mira la tabla **"Si algo sale mal"** al final.
 
@@ -177,7 +197,7 @@ Tienes dos caminos. **Recomendado: el B**, porque construir es la mejor forma de
 ### Camino A — Leer el código en orden (2–3 días)
 Abre los archivos en este orden (de adentro hacia afuera del hexágono):
 
-1. `src/shared/domain/` → la base: errores, eventos, agregado con versión.
+1. `src/shared/domain/` → la base: errores, eventos, agregado con versión y puertos compartidos (reloj, ids, transacciones).
 2. `src/catalog/domain/value-objects/venue.ts` y `ticket-price.ts` → qué es un value object.
 3. `src/catalog/domain/entities/event.ts` → agregado rico (`schedule`, `cancel`).
 4. `src/catalog/domain/ports/` → puertos.
@@ -186,7 +206,7 @@ Abre los archivos en este orden (de adentro hacia afuera del hexágono):
 7. `src/catalog/infrastructure/http/events.controller.ts` → controlador delgado.
 8. `src/catalog/catalog.module.ts` → dónde se conectan puertos y adaptadores.
 9. Repite 2–8 con `src/ticketing/`. Lo más importante: `ticket-allocation.ts` (el cupo
-   que impide sobrevender) y `purchase-tickets.handler.ts` (reintentos y compensación).
+   que impide sobrevender) y `purchase-tickets.handler.ts` (transacción y reintentos).
 10. `src/ticketing/infrastructure/adapters/` y `event-handlers/` → comunicación entre contextos.
 11. `src/database/migrations/` y `src/config/`.
 12. `test/` → e2e y la prueba de arquitectura.
@@ -267,7 +287,7 @@ grep -rn "@nestjs\|typeorm\|class-validator" src/*/domain/
 ## ETAPA 7 — Preparar la defensa
 
 ### 7.1 Ensaya las preguntas
-- [ ] Responde **en voz alta** las 14 preguntas de la Fase 18 de `docs/guia-paso-a-paso.md`.
+- [ ] Responde **en voz alta** las 15 preguntas de la Fase 18 de `docs/guia-paso-a-paso.md`.
 
 ### 7.2 Guion de demostración (5 minutos)
 1. **(30 s)** "Es una venta de entradas con dos contextos: Catálogo y Venta. La regla clave: nunca sobrevender."
@@ -296,7 +316,11 @@ grep -rn "@nestjs\|typeorm\|class-validator" src/*/domain/
 | `ECONNREFUSED` | La base no está levantada: Etapa 3.4 |
 | `relation "events" does not exist` | Faltan migraciones: Etapa 3.5 |
 | `400 EVENT_INVALID_START` o `EVENT_START_IN_PAST` | La fecha debe ser futura y terminar en `Z` (o `-05:00`) |
-| La app no arranca y menciona `TICKET_CODE_SECRET` | Tu `.env` es antiguo: vuelve a copiar `.env.example` |
+| La app no arranca y menciona `TICKET_CODE_SECRET`, `ORGANIZER_API_KEY` o `THROTTLE_LIMIT` | Tu `.env` es antiguo: vuelve a copiar `.env.example` |
+| `401 UNAUTHORIZED` | Falta la cabecera `Authorization: Bearer …` (pestaña Headers) o la clave no coincide con tu `.env` |
+| `403 FORBIDDEN` | Usaste la clave de puerta 🚪 en una operación del organizador 🎟️ |
+| `409 TICKET_CHECK_IN_NOT_OPEN` | El evento empieza dentro de más de 12 horas: crea otro con `startsAt` más cercano |
+| `429 TOO_MANY_REQUESTS` | Hiciste muchas peticiones seguidas: espera un minuto |
 | `pnpm` bloqueado en PowerShell | Etapa 2.3 (comando `Set-ExecutionPolicy`) |
 | `password authentication failed` | Cambiaste la contraseña del `.env` después de crear la base: `docker compose down -v` y repite 3.4–3.5 (borra los datos) |
 | `409 ..._CONCURRENT_MODIFICATION` | Dos peticiones cambiaron lo mismo a la vez: vuelve a enviar la tuya |

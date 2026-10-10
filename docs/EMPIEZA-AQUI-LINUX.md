@@ -45,7 +45,8 @@ ETAPA 7  Preparar la defensa ......................... 1–2 horas
 - [ ] Lee esto:
   - **Qué es**: una API REST de **venta de entradas para eventos**. Hay un **catálogo** de
     eventos (conciertos, obras…) y una **venta** que nunca sobrevende el aforo, valida cada
-    entrada en la puerta una sola vez y reembolsa si el evento se cancela.
+    entrada en la puerta una sola vez (solo para su evento y en horario de puertas) y
+    reembolsa si el evento se cancela. Las operaciones del personal piden una **clave de API**.
   - **Cómo está hecho**: NestJS + TypeScript con arquitectura hexagonal, DDD y CQRS;
     PostgreSQL en Docker; migraciones; pruebas unitarias y e2e.
   - **Dónde está**: `https://github.com/bryanramosing-ux/Tarea-Curso_NestJS`.
@@ -57,7 +58,7 @@ ETAPA 7  Preparar la defensa ......................... 1–2 horas
 | `docs/guia-paso-a-paso.md` | Aprender a construirlo tú mismo, fase por fase |
 | `docs/rubric-self-assessment.md` | Cómo cumple cada criterio de la rúbrica |
 | `docs/audit-checklist.md` | Auditoría de seguridad y bugs |
-| `docs/business-rules/business-rules.md` | Las 15 reglas de negocio (RN-001…RN-015) |
+| `docs/business-rules/business-rules.md` | Las 16 reglas de negocio (RN-001…RN-016) |
 | `docs/decisions/` | Por qué se tomó cada decisión (ADRs) |
 
 ---
@@ -246,11 +247,15 @@ pnpm install
 ```bash
 cp .env.example .env
 ```
-Genera un secreto propio para los códigos de entrada (recomendado):
+Genera un secreto y unas claves propias (recomendado; obligatorio en producción, donde la
+app no arranca con los valores de ejemplo):
 ```bash
-sed -i "s/^TICKET_CODE_SECRET=.*/TICKET_CODE_SECRET=$(openssl rand -hex 32)/" .env
-grep TICKET_CODE_SECRET .env      # debe mostrar 64 caracteres hexadecimales
+for VAR in TICKET_CODE_SECRET ORGANIZER_API_KEY GATE_API_KEY; do
+  sed -i "s/^$VAR=.*/$VAR=$(openssl rand -hex 32)/" .env
+done
+grep -E 'TICKET_CODE_SECRET|API_KEY' .env      # tres valores distintos de 64 caracteres hexadecimales
 ```
+> Si cambias las claves, en la Etapa 4.2 usa las tuyas: el bloque de preparación las lee del `.env`.
 - [ ] Existe `.env` (no lo subas nunca a GitHub; ya está en `.gitignore`).
 
 ### 3.4 ¿Tienes un PostgreSQL instalado en el sistema?
@@ -276,7 +281,7 @@ docker compose ps
 ```bash
 pnpm migration:run
 ```
-- [ ] Aparecen **2** mensajes `... has been executed successfully`.
+- [ ] Aparecen **3** mensajes `... has been executed successfully`.
 
 ### 3.7 Arrancar la API
 ```bash
@@ -298,34 +303,38 @@ cd ~/proyectos/Tarea-Curso_NestJS
 pnpm test
 pnpm test:e2e
 ```
-- [ ] `pnpm test` → `Tests: 189 passed, 189 total`
-- [ ] `pnpm test:e2e` → `Tests: 44 passed, 44 total`
+- [ ] `pnpm test` → `Tests: 252 passed, 252 total`
+- [ ] `pnpm test:e2e` → `Tests: 68 passed, 68 total`
 
 ### 4.2 Probar la API a mano con `curl` + `jq`
 
 Copia **bloque por bloque** en la segunda terminal (con la API arrancada en la primera).
 Cada respuesta termina con una línea `→ HTTP xxx`.
 
-**Preparación** (variables y una función `api` para no repetir opciones):
+**Preparación** (variables, claves del `.env` y una función `api` para no repetir opciones):
 ```bash
 API=http://localhost:3000
-STARTS=$(date -u -d '+30 days' +%Y-%m-%dT21:00:00Z)      # una fecha futura, con zona horaria
+# Dentro de 2 horas: futura (RN-003) y con las puertas ya abiertas (abren 12 h antes, RN-016)
+STARTS=$(date -u -d '+2 hours' +%Y-%m-%dT%H:%M:00Z)
+ORG="Authorization: Bearer $(grep '^ORGANIZER_API_KEY=' .env | cut -d= -f2)"   # organizador
+GATE="Authorization: Bearer $(grep '^GATE_API_KEY=' .env | cut -d= -f2)"       # puerta
 api() { curl -s -w '\n→ HTTP %{http_code}\n' -H 'Content-Type: application/json' "$@"; }
 echo "El evento empezará el $STARTS"
 ```
 
-**Paso 1 — Programar un evento con aforo 3** → `201`
+**Paso 1 — Programar un evento con aforo 3 (organizador)** → `201`
 ```bash
-EVENT_ID=$(curl -s -X POST $API/events -H 'Content-Type: application/json' \
+EVENT_ID=$(curl -s -X POST $API/events -H 'Content-Type: application/json' -H "$ORG" \
   -d "{\"name\":\"Rock en el Parque\",\"venue\":\"Estadio Nacional\",\"startsAt\":\"$STARTS\",\"capacity\":3,\"priceCents\":4500,\"currency\":\"PEN\"}" \
   | jq -r .id)
 echo "EVENT_ID=$EVENT_ID"
 api $API/events/$EVENT_ID | head -1 | jq .
 ```
 
-**Paso 2 — Mismo recinto (en minúsculas) y misma hora** → `409 EVENT_SLOT_TAKEN`
+**Paso 2 — Mismo recinto (en minúsculas) y misma hora** → `409 EVENT_SLOT_TAKEN`; sin clave → `401`
 ```bash
-api -X POST $API/events -d "{\"name\":\"Otro concierto\",\"venue\":\"estadio nacional\",\"startsAt\":\"$STARTS\",\"capacity\":10,\"priceCents\":0,\"currency\":\"USD\"}"
+api -X POST $API/events -H "$ORG" -d "{\"name\":\"Otro concierto\",\"venue\":\"estadio nacional\",\"startsAt\":\"$STARTS\",\"capacity\":10,\"priceCents\":0,\"currency\":\"USD\"}"
+api -X POST $API/events -d "{\"name\":\"Otro concierto\",\"venue\":\"Otra sala\",\"startsAt\":\"$STARTS\",\"capacity\":10,\"priceCents\":0,\"currency\":\"USD\"}"
 ```
 
 **Paso 3 — Disponibilidad** → `200` con `"available": 3`
@@ -355,41 +364,50 @@ api -X POST $API/tickets -d "{\"eventId\":\"$EVENT_ID\",\"quantity\":2,\"holderN
 api -X POST $API/tickets -d "{\"eventId\":\"$EVENT_ID\",\"quantity\":11,\"holderName\":\"Luis\",\"holderEmail\":\"luis@mail.com\"}"
 ```
 
-**Paso 7 — Consultar la entrada 1** → `200`, **sin** el código
+**Paso 7 — Consultar la entrada 1 (personal de puerta)** → `200`, **sin** el código; sin clave → `401`
 ```bash
+api $API/tickets/$TICKET_1 -H "$GATE"
 api $API/tickets/$TICKET_1
 ```
+> La entrada contiene datos personales (nombre y email), por eso solo la ve el personal.
 
-**Paso 8 — Validar la entrada 1 en la puerta** → `200`
+**Paso 8 — Validar la entrada 1 en la puerta de su evento** → `200`
 ```bash
-api -X POST $API/tickets/check-in -d "{\"code\":\"$CODE_1\"}"
+api -X POST $API/tickets/check-in -H "$GATE" -d "{\"eventId\":\"$EVENT_ID\",\"code\":\"$CODE_1\"}"
 ```
 
 **Paso 9 — Validarla otra vez** → `409 TICKET_ALREADY_USED`
 ```bash
-api -X POST $API/tickets/check-in -d "{\"code\":\"$CODE_1\"}"
+api -X POST $API/tickets/check-in -H "$GATE" -d "{\"eventId\":\"$EVENT_ID\",\"code\":\"$CODE_1\"}"
 ```
 
-**Paso 10 — Cancelar el evento** → `204`
+**Paso 10 — Cancelar el evento (organizador)** → `204`; con la clave de puerta → `403`
 ```bash
-api -X POST $API/events/$EVENT_ID/cancel
+api -X POST $API/events/$EVENT_ID/cancel -H "$GATE"
+api -X POST $API/events/$EVENT_ID/cancel -H "$ORG"
 ```
 
 **Paso 11 — Ver las dos entradas tras cancelar** → la usada sigue `USED`, la otra pasa a `REFUNDED`
 ```bash
 sleep 1
-curl -s $API/tickets/$TICKET_1 | jq -r '"Entrada 1: " + .status'
-curl -s $API/tickets/$TICKET_2 | jq -r '"Entrada 2: " + .status'
+curl -s $API/tickets/$TICKET_1 -H "$GATE" | jq -r '"Entrada 1: " + .status'
+curl -s $API/tickets/$TICKET_2 -H "$GATE" | jq -r '"Entrada 2: " + .status'
 curl -s $API/tickets/availability/$EVENT_ID | jq '{sold, available, salesOpen}'
 ```
 
-- [ ] Las 11 respuestas coinciden con lo esperado.
+- [ ] Las respuestas coinciden con lo esperado.
 
 ### 4.3 (Opcional) Demostrar que no se sobrevende
-30 compras **simultáneas** para un evento con aforo 5:
+30 compras **simultáneas** para un evento con aforo 5. Como salen todas desde tu IP, el
+límite de compras (`THROTTLE_SENSITIVE_LIMIT=20` por minuto) cortaría la demo con `429`:
+súbelo antes y **reinicia la API** (`Ctrl + C` y `pnpm start:dev`):
+```bash
+sed -i 's/^THROTTLE_SENSITIVE_LIMIT=.*/THROTTLE_SENSITIVE_LIMIT=100/' .env
+```
+Después:
 ```bash
 STARTS2=$(date -u -d '+40 days' +%Y-%m-%dT20:00:00Z)
-EVENT2=$(curl -s -X POST $API/events -H 'Content-Type: application/json' \
+EVENT2=$(curl -s -X POST $API/events -H 'Content-Type: application/json' -H "$ORG" \
   -d "{\"name\":\"Concierto agotado\",\"venue\":\"Sala Pequeña\",\"startsAt\":\"$STARTS2\",\"capacity\":5,\"priceCents\":1000,\"currency\":\"USD\"}" | jq -r .id)
 for i in $(seq 1 30); do
   curl -s -o /dev/null -w '%{http_code}\n' -X POST $API/tickets -H 'Content-Type: application/json' \
@@ -399,6 +417,7 @@ wait
 curl -s $API/tickets/availability/$EVENT2 | jq '{capacity, sold, available}'
 ```
 - [ ] Salen **5** respuestas `201` y **25** `409`, y `sold` es **5**.
+- [ ] Vuelve a dejar el límite como estaba: `sed -i 's/^THROTTLE_SENSITIVE_LIMIT=.*/THROTTLE_SENSITIVE_LIMIT=20/' .env` y reinicia la API.
 
 ### 4.4 (Opcional) Mirar dentro de la base de datos
 ```bash
@@ -423,7 +442,7 @@ Tienes dos caminos. **Recomendado: el B**, porque construir es la mejor forma de
 code .        # abre el proyecto en VS Code (si lo instalaste)
 ```
 Lee en este orden (de adentro hacia afuera del hexágono):
-1. `src/shared/domain/` → la base: errores, eventos, agregado con versión.
+1. `src/shared/domain/` → la base: errores, eventos, agregado con versión y puertos compartidos (reloj, ids, transacciones).
 2. `src/catalog/domain/value-objects/venue.ts` y `ticket-price.ts` → value objects.
 3. `src/catalog/domain/entities/event.ts` → agregado rico (`schedule`, `cancel`).
 4. `src/catalog/domain/ports/` → puertos.
@@ -511,7 +530,7 @@ echo "== vulnerabilidades en producción";                   pnpm audit --prod |
 ## ETAPA 7 — Preparar la defensa
 
 ### 7.1 Ensaya las preguntas
-- [ ] Responde **en voz alta** las 14 preguntas de la Fase 18 de `docs/guia-paso-a-paso.md`.
+- [ ] Responde **en voz alta** las 15 preguntas de la Fase 18 de `docs/guia-paso-a-paso.md`.
 
 ### 7.2 Guion de demostración (5 minutos)
 1. **(30 s)** "Es una venta de entradas con dos contextos: Catálogo y Venta. La regla clave: nunca sobrevender."
@@ -530,7 +549,7 @@ docker compose up -d --wait
 pnpm migration:run
 pnpm start:dev
 ```
-- [ ] La API responde: `curl -s localhost:3000/events | jq length`
+- [ ] La API responde: `curl -s localhost:3000/events | jq '.items | length'`
 
 ---
 
@@ -548,7 +567,11 @@ pnpm start:dev
 | `EACCES: permission denied` al instalar algo global con npm | Estás usando el Node del sistema: instala Node con nvm (Etapa 2.3). **No uses `sudo` con npm/pnpm.** |
 | `node: … requires Node.js >= 20` o errores de sintaxis raros | `node -v`; si es menor que 20: `nvm install 22 && nvm alias default 22`. |
 | `ENOSPC: System limit for number of file watchers reached` (al usar `pnpm start:dev`) | `echo fs.inotify.max_user_watches=524288 \| sudo tee -a /etc/sysctl.conf && sudo sysctl -p` |
-| `Invalid environment configuration (check your .env)` | Falta el `.env` o una variable (p. ej. `TICKET_CODE_SECRET`): Etapa 3.3. |
+| `Invalid environment configuration (check your .env)` | Falta el `.env` o una variable (p. ej. `ORGANIZER_API_KEY`): vuelve a copiar `.env.example` (Etapa 3.3). |
+| `401 UNAUTHORIZED` | Falta `-H "$ORG"` o `-H "$GATE"`, o las variables `ORG`/`GATE` están vacías (repite la preparación de la Etapa 4.2 desde la carpeta del proyecto). |
+| `403 FORBIDDEN` | Usaste la clave de puerta en una operación del organizador. |
+| `409 TICKET_CHECK_IN_NOT_OPEN` | El evento empieza dentro de más de 12 horas: usa `STARTS` de la Etapa 4.2 (+2 horas). |
+| `429 TOO_MANY_REQUESTS` | Superaste el límite de peticiones: espera un minuto o súbelo en `.env` (Etapa 4.3). |
 | `password authentication failed for user "ticketing"` | Cambiaste el `.env` después de crear la base: `docker compose down -v`, luego Etapas 3.5 y 3.6 (borra los datos). |
 | `relation "events" does not exist` | Faltan migraciones: Etapa 3.6. |
 | `400 EVENT_INVALID_START` / `EVENT_START_IN_PAST` | La fecha debe ser futura y llevar zona horaria (`…T21:00:00Z`). Usa la variable `STARTS` de la Etapa 4.2. |

@@ -22,7 +22,7 @@
 | `EventCancelled` | `catalog.event_cancelled` | Catálogo | `Event.cancel` | `eventId` | `ticketing/infrastructure/event-handlers/close-sales-on-event-cancelled.listener.ts` |
 | `TicketsSold` | `ticketing.tickets_sold` | Venta | `TicketAllocation.sell` | `eventId, quantity, remaining` | — |
 | `EventSoldOut` | `ticketing.event_sold_out` | Venta | `TicketAllocation.sell` (última plaza) | `eventId` | — (p. ej. avisar a marketing) |
-| `SalesClosed` | `ticketing.sales_closed` | Venta | `TicketAllocation.close` | `eventId` | — |
+| `SalesClosed` | `ticketing.sales_closed` | Venta | `TicketAllocation.close` / `TicketAllocation.closedFor` | `eventId` | — |
 | `TicketIssued` | `ticketing.ticket_issued` | Venta | `Ticket.issue` | `ticketId, eventId` | — (p. ej. enviar el email con la entrada) |
 | `TicketCheckedIn` | `ticketing.ticket_checked_in` | Venta | `Ticket.checkIn` | `ticketId, eventId` | — |
 | `TicketRefunded` | `ticketing.ticket_refunded` | Venta | `Ticket.refund` | `ticketId, eventId, amountCents, currency` | — (p. ej. devolver el dinero) |
@@ -46,6 +46,17 @@ handler: agregado.metodoDeNegocio()  →  repo.save(agregado)  →  publisher.pu
 
 El `EventBus` es en memoria y los oyentes se ejecutan de forma asíncrona: el cierre de
 ventas y los reembolsos tras `EventCancelled` son **eventualmente consistentes**
-(milisegundos). El e2e lo comprueba con un sondeo acotado (`eventually`). Un fallo del
-oyente se registra en el log (solo ids y mensaje) y no revierte la cancelación; el comando
-es idempotente y puede volver a ejecutarse. Mejora prevista: *transactional outbox* (TD-001).
+(milisegundos). El e2e lo comprueba con un sondeo acotado (`eventually`).
+
+Qué pasa si algo falla (ADR-016):
+- El oyente reintenta 3 veces con espera creciente; si aun así falla, lo registra (solo ids y
+  mensaje) y no revierte la cancelación.
+- El cierre perdido lo completa la **conciliación** (`ReconcileSales`) al arrancar la
+  aplicación o cuando el organizador llama a `POST /tickets/sales/reconcile`. El comando es
+  idempotente.
+- Mientras tanto no hay riesgo: la compra y el check-in consultan el catálogo y rechazan un
+  evento cancelado aunque su cupo siga abierto.
+
+`CloseEventSales` publica sus eventos (`SalesClosed`, `TicketRefunded`) una sola vez, al
+final, después de haber persistido el cierre y todos los reembolsos (procesados por lotes
+de 200). Sigue sin haber *transactional outbox* (TD-001).

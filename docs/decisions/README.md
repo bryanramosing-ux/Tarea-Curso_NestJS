@@ -17,3 +17,7 @@ Estado de todas: **Aceptada**.
 | [ADR-010](ADR-010-testing-strategy.md) | Estrategia de pruebas: unitarias sin infraestructura, arquitectura automatizada, e2e reales |
 | [ADR-011](ADR-011-optimistic-locking.md) | Bloqueo optimista con columna `version` para evitar actualizaciones perdidas |
 | [ADR-012](ADR-012-ticket-allocation-aggregate.md) | El cupo de cada evento es un agregado propio: la pieza que impide sobrevender |
+| [ADR-013](ADR-013-unit-of-work.md) | Compra transaccional con un puerto `UnitOfWork`; el cupo serializa compra y cancelación |
+| [ADR-014](ADR-014-api-keys-and-rate-limiting.md) | Autenticación del personal por clave de API con roles y límite de peticiones por IP |
+| [ADR-015](ADR-015-clock-and-randomness-ports.md) | El reloj y el azar detrás de puertos (`Clock`, `IdGenerator`, `TicketCodeGenerator`) |
+| [ADR-016](ADR-016-cancellation-consistency.md) | Consistencia de RN-014 sin outbox: catálogo como fuente de verdad, reintentos y conciliación |

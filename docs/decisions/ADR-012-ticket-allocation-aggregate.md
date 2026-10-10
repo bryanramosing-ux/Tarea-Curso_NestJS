@@ -8,11 +8,13 @@ concreta. ¿Qué agregado la protege?
 ## Decisión
 Un agregado `TicketAllocation` por evento, en el contexto de venta, que lleva el contador
 `sold`, el aforo, el precio y el inicio (copiados del catálogo al abrir la venta). Comprar
-es: `allocation.sell(quantity)` → guardar el cupo (con bloqueo optimista) → emitir las
-`Ticket`. Cada `Ticket` es un agregado aparte (su ciclo de vida es independiente: check-in, reembolso).
+es, dentro de una transacción (ADR-013): `allocation.sell(quantity, heldByHolder, now)` →
+guardar el cupo (con bloqueo optimista) → emitir las `Ticket`. Cada `Ticket` es un agregado
+aparte (su ciclo de vida es independiente: check-in, reembolso).
 
 El cupo se crea **la primera vez que alguien compra** para ese evento (consultando el
-catálogo por el ACL). Si dos primeras compras lo crean a la vez, la clave primaria
+catálogo por el ACL), o **ya cerrado** si el evento se cancela sin haber vendido nada
+(`TicketAllocation.closedFor`). Si dos operaciones lo crean a la vez, la clave primaria
 `pk_ticket_allocations` rechaza una y esa reintenta.
 
 ## Por qué
@@ -30,11 +32,12 @@ catálogo por el ACL). Si dos primeras compras lo crean a la vez, la clave prima
   rechazadas reciben el mensaje correcto ("no quedan entradas") en lugar de un conflicto técnico.
 
 ## Consecuencias
-- La compra guarda dos agregados (cupo y entradas) sin transacción común. El orden elegido
-  hace que, si algo falla a mitad, se pierdan plazas pero **nunca se sobrevenda**
-  (deuda técnica TD-003).
-- Una compra que coincide con la cancelación del evento relee el cupo al final y, si la
-  venta se cerró, reembolsa sus propias entradas (RN-014, ADR-007).
+- La compra guarda dos agregados (cupo y entradas) **en la misma transacción** (ADR-013):
+  si algo falla a mitad, no queda nada guardado (antes se perdían plazas, TD-003 resuelta).
+- El cupo también limita las entradas activas por titular (RN-008): el conteo se hace
+  después de leer el cupo, y el bloqueo optimista obliga a recontar si otra compra cambió el cupo.
+- El cupo es el punto donde se encuentran la compra y la cancelación del evento: el cierre
+  lo actualiza o lo crea cerrado, así que una compra simultánea choca con él (RN-014, ADR-013).
 - Un evento muy demandado concentra las escrituras en una fila (el cupo): suficiente para
   esta escala; a gran escala se podría repartir el aforo en varios cupos (*sharding*).
 

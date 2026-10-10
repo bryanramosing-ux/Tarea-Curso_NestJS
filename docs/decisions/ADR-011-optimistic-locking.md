@@ -14,9 +14,11 @@ sin control, 30 compradores simultáneos para 5 plazas obtienen **16** entradas.
   `WHERE id = ? AND version = ?`. Si no se actualiza ninguna fila, lanzan
   `*_CONCURRENT_MODIFICATION` (CONFLICT → 409). Tras guardar, llaman a `markAsPersisted()`.
 - Quien no puede devolver un 409 a un humano reintenta releyendo:
-  - `PurchaseTicketsHandler` (hasta 10 intentos con espera aleatoria, ADR-012);
+  - `PurchaseTicketsHandler` (hasta 10 intentos con espera aleatoria; cada intento es una
+    transacción completa que se deshace si choca, ADR-012 y ADR-013);
   - `CheckInTicketHandler` (un reintento: el segundo lector recibe `TICKET_ALREADY_USED`);
-  - `CloseEventSalesHandler` (disparado por un evento: relee y omite lo ya usado/reembolsado).
+  - `CloseEventSalesHandler` (disparado por un evento: hasta 10 intentos por agregado;
+    relee y omite lo ya usado/reembolsado).
 
 ## Por qué
 - Las invariantes se comprueban sobre el estado leído; sin versión, una decisión tomada
@@ -32,8 +34,9 @@ sin control, 30 compradores simultáneos para 5 plazas obtienen **16** entradas.
 - La versión no se expone en las vistas (no hay `If-Match`/`ETag` todavía).
 
 ## Alternativas descartadas
-- Bloqueo pesimista (`SELECT … FOR UPDATE`): exige transacciones que abarquen el caso de
-  uso entero y un puerto de *unit of work*; serializa todas las compras de un evento.
+- Bloqueo pesimista (`SELECT … FOR UPDATE`): con el puerto *unit of work* (ADR-013) ya sería
+  posible, pero serializa todas las compras de un evento esperando en la base; el bloqueo
+  optimista falla rápido y deja la decisión de reintentar al caso de uso.
 - `UPDATE … SET sold = sold + n WHERE sold + n <= capacity` directamente en SQL: es
   correcto y rápido, pero saca la regla RN-009 del dominio y la esconde en el adaptador.
 - "El último gana": es justamente el bug.
