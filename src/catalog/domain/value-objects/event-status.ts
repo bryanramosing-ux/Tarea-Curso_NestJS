@@ -15,7 +15,7 @@ export class EventStatus {
   static create(value: string): EventStatus {
     const normalized = typeof value === 'string' ? value.trim().toUpperCase() : '';
     if (!VALID_VALUES.includes(normalized)) {
-      throw new InvalidEventStatusError(String(value));
+      throw new InvalidEventStatusError();
     }
     return new EventStatus(normalized as EventStatusValue);
   }

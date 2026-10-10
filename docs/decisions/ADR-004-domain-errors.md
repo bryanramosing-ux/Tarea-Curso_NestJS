@@ -6,11 +6,18 @@ identificador estable, pero el dominio no puede conocer HTTP ni NestJS.
 
 ## Decisión
 - `DomainException` abstracta en `shared/domain` con `code` (string estable, p. ej.
-  `TASK_REQUIRES_ASSIGNEE`) y `kind` (`VALIDATION | NOT_FOUND | CONFLICT`).
+  `TICKET_NOT_ENOUGH_AVAILABLE`) y `kind` (`VALIDATION | NOT_FOUND | CONFLICT`).
 - Una subclase por error en `<contexto>/domain/errors/`.
 - Un único `DomainExceptionFilter` traduce `kind → 400/404/409` con un `switch`
   exhaustivo (chequeo `never`).
 - Los adaptadores **no** lanzan "no encontrado": devuelven `null` y el handler decide.
+- Los mensajes de validación **no repiten el valor recibido** (no se refleja la entrada del cliente).
+- Una fila de la base que viola las reglas del dominio **no** es un error de negocio: el
+  mapper envuelve la `DomainException` en `PersistedDataCorruptedError` (no es
+  `DomainException`) y la respuesta es 500.
+- Los errores que no son de dominio también comparten la forma `{ statusCode, code, message, path, timestamp }`:
+  `HttpExceptionFilter` (errores del framework: 400 de DTO, 401, 403, 404 de ruta, 429) y
+  `UnhandledExceptionFilter` (todo lo demás: 413 de express y 500 genérico, con el detalle solo en el log).
 
 ## Por qué
 - `kind` captura la semántica que le importa al dominio (dato inválido, no existe,
@@ -19,6 +26,8 @@ identificador estable, pero el dominio no puede conocer HTTP ni NestJS.
   contrato (`docs/business-rules/error-catalog.md`).
 - Un solo punto de traducción evita inconsistencias y garantiza que un error de
   negocio nunca acabe en 500.
+- Al revés también importa: un dato corrupto en la base es culpa del servidor. Responder
+  400 (como se hacía antes) le diría al cliente que corrija una petición que es correcta.
 
 ## Consecuencias
 - Añadir un `kind` obliga a actualizar el filtro (el compilador lo exige).

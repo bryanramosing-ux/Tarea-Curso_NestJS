@@ -1,6 +1,8 @@
 import { Inject } from '@nestjs/common';
 import { CommandHandler, ICommandHandler } from '@nestjs/cqrs';
+import { CLOCK, Clock } from '../../../../shared/domain/ports/clock.port';
 import { DOMAIN_EVENT_PUBLISHER, DomainEventPublisher } from '../../../../shared/domain/ports/domain-event-publisher.port';
+import { ID_GENERATOR, IdGenerator } from '../../../../shared/domain/ports/id-generator.port';
 import { Event } from '../../../domain/entities/event';
 import { EventSlotTakenError } from '../../../domain/errors/event.errors';
 import { EVENT_REPOSITORY, EventRepository } from '../../../domain/ports/event.repository';
@@ -22,6 +24,8 @@ export class ScheduleEventHandler implements ICommandHandler<ScheduleEventComman
   constructor(
     @Inject(EVENT_REPOSITORY) private readonly events: EventRepository,
     @Inject(DOMAIN_EVENT_PUBLISHER) private readonly eventPublisher: DomainEventPublisher,
+    @Inject(CLOCK) private readonly clock: Clock,
+    @Inject(ID_GENERATOR) private readonly ids: IdGenerator,
   ) {}
 
   async execute(command: ScheduleEventCommand): Promise<ScheduleEventResult> {
@@ -35,7 +39,10 @@ export class ScheduleEventHandler implements ICommandHandler<ScheduleEventComman
       throw new EventSlotTakenError(venue.value, startsAt.value);
     }
 
-    const event = Event.schedule({ id: EventId.generate(), name, venue, startsAt, capacity, price });
+    const event = Event.schedule(
+      { id: EventId.create(this.ids.generate()), name, venue, startsAt, capacity, price },
+      this.clock.now(),
+    );
 
     await this.events.save(event);
     await this.eventPublisher.publishAll(event.pullDomainEvents());

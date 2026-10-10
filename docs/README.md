@@ -8,10 +8,10 @@
 | [`architecture/overview.md`](architecture/overview.md) | Capas, regla de dependencias, flujo de una petición, CQRS, errores y validación |
 | [`architecture/bounded-contexts.md`](architecture/bounded-contexts.md) | Mapa de contextos Catálogo / Venta, ACL y por qué están separados |
 | [`architecture/domain-events.md`](architecture/domain-events.md) | Catálogo de eventos, cuándo se publican y quién los escucha |
-| [`architecture/persistence.md`](architecture/persistence.md) | Modelo de datos, migraciones, restricciones e índices |
-| [`architecture/security-and-configuration.md`](architecture/security-and-configuration.md) | Variables de entorno, secretos, contraseñas, logs |
+| [`architecture/persistence.md`](architecture/persistence.md) | Modelo de datos, migraciones, restricciones, índices y transacciones |
+| [`architecture/security-and-configuration.md`](architecture/security-and-configuration.md) | Variables de entorno, secretos, autenticación por clave de API, límite de peticiones, logs |
 | [`architecture/testing.md`](architecture/testing.md) | Estrategia de pruebas y qué cubre cada nivel |
-| [`business-rules/business-rules.md`](business-rules/business-rules.md) | Reglas RN-001…RN-015 con el código que las implementa y sus pruebas |
+| [`business-rules/business-rules.md`](business-rules/business-rules.md) | Reglas RN-001…RN-016 con su estado, el código que las implementa y sus pruebas |
 | [`business-rules/error-catalog.md`](business-rules/error-catalog.md) | Códigos de error estables → tipo → HTTP |
 | [`decisions/`](decisions/README.md) | ADRs: decisiones arquitectónicas y su porqué |
 | [`technical-debt.md`](technical-debt.md) | Deuda técnica y limitaciones conocidas |

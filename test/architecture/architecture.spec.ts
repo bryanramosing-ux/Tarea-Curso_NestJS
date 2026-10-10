@@ -119,6 +119,23 @@ describe('Architecture', () => {
       expect(offenders).toEqual([]);
     });
 
+    it('domain/ never imports Node.js built-ins (azar, ficheros, red: van detrás de un puerto)', () => {
+      const offenders = domainFiles.flatMap((file) =>
+        importsOf(file)
+          .filter((specifier) => /^node:|^(crypto|fs|path|http|https|os|child_process)$/.test(specifier))
+          .map((specifier) => `${rel(file)} -> ${specifier}`),
+      );
+      expect(offenders).toEqual([]);
+    });
+
+    it('domain/ and application/ never read the system clock or Math.random directly (puertos Clock / IdGenerator)', () => {
+      const files = [...domainFiles, ...CONTEXTS.flatMap((c) => productionFiles(join(SRC, c, 'application')))];
+      const offenders = files
+        .filter((file) => /new Date\(\)|Date\.now\(\)|Math\.random\(/.test(readFileSync(file, 'utf8').replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, '')))
+        .map(rel);
+      expect(offenders).toEqual([]);
+    });
+
     it('application/ depends on ports, never on infrastructure or concrete adapters', () => {
       const offenders = CONTEXTS.flatMap((context) =>
         productionFiles(join(SRC, context, 'application')).flatMap((file) =>
@@ -237,6 +254,17 @@ describe('Architecture', () => {
         // publishAll() y ningún save() después (los métodos privados auxiliares
         // pueden estar escritos más abajo en el archivo).
         const body = methodBody(readFileSync(file, 'utf8'), 'async execute(');
+        // Excepción explícita: un handler que NO guarda ni publica nada y solo
+        // delega en otros casos de uso por el CommandBus (ReconcileSales) no
+        // tiene nada que ordenar; la regla se comprueba en los casos de uso a
+        // los que delega.
+        if (!body.includes('.save(') && !body.includes('.publishAll(')) {
+          expect({ file: rel(file), delegatesThroughCommandBus: /commandBus\.execute\(/.test(body) }).toEqual({
+            file: rel(file),
+            delegatesThroughCommandBus: true,
+          });
+          continue;
+        }
         const publish = body.indexOf('.publishAll(');
         const saveBefore = publish !== -1 && body.slice(0, publish).includes('.save(');
         const saveAfter = publish !== -1 && body.slice(publish).includes('.save(');

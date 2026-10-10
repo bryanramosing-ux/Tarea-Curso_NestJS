@@ -2,6 +2,7 @@ import { TicketAllocation, TicketAllocationPrimitives } from '../../../domain/en
 import { SalesConcurrentModificationError } from '../../../domain/errors/ticketing.errors';
 import { TicketAllocationRepository } from '../../../domain/ports/ticket-allocation.repository';
 import { EventReference } from '../../../domain/value-objects/event-reference';
+import { SalesStatusValue } from '../../../domain/value-objects/sales-status';
 
 /**
  * Adaptador en memoria del puerto TicketAllocationRepository (pruebas unitarias).
@@ -23,5 +24,13 @@ export class InMemoryTicketAllocationRepository implements TicketAllocationRepos
   async findByEvent(eventId: EventReference): Promise<TicketAllocation | null> {
     const row = this.rows.get(eventId.value);
     return row ? TicketAllocation.fromPrimitives({ ...row }) : null;
+  }
+
+  async findOpen(limit: number, after?: EventReference): Promise<TicketAllocation[]> {
+    return [...this.rows.values()]
+      .filter((row) => row.status === SalesStatusValue.OPEN && (!after || row.eventId > after.value))
+      .sort((a, b) => a.eventId.localeCompare(b.eventId))
+      .slice(0, limit)
+      .map((row) => TicketAllocation.fromPrimitives({ ...row }));
   }
 }

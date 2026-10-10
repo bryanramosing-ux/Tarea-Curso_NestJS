@@ -157,16 +157,30 @@ export abstract class AggregateRoot {
 ```
 La versión servirá para el **bloqueo optimista** (fase 12): es lo que impide sobrevender.
 
-### 2.3 Puerto para publicar eventos y utilidades
+### 2.3 Puertos compartidos: eventos, reloj, identificadores y transacciones
 ```ts
 export const DOMAIN_EVENT_PUBLISHER = Symbol('DOMAIN_EVENT_PUBLISHER');
 export interface DomainEventPublisher { publishAll(events: DomainEvent[]): Promise<void>; }
+
+export const CLOCK = Symbol('CLOCK');
+export interface Clock { now(): Date; }                       // la hora actual
+
+export const ID_GENERATOR = Symbol('ID_GENERATOR');
+export interface IdGenerator { generate(): string; }          // UUID nuevos
+
+export const UNIT_OF_WORK = Symbol('UNIT_OF_WORK');
+export interface UnitOfWork { run<T>(work: () => Promise<T>): Promise<T>; }   // todo o nada
 ```
 > 💡 **¿Por qué `Symbol`?** Las interfaces de TypeScript desaparecen al compilar; Nest
 > necesita un valor real para saber qué inyectar.
+>
+> 💡 **¿Por qué el reloj y el azar son puertos?** Son dependencias externas, igual que la
+> base de datos. Si el dominio llamara a `new Date()`, no podrías probar "el evento ya
+> empezó" sin esperar ni inventar fechas. Con `FixedClock` lo pruebas al segundo exacto (ADR-015).
 
-Copia también `src/shared/domain/uuid.ts` (`generateUuid`, `isValidUuid`, `randomString`
-con un generador **criptográfico**, que usaremos para los códigos de entrada).
+`src/shared/domain/uuid.ts` solo **valida** el formato (`isValidUuid`). Generar UUID y
+códigos con azar criptográfico es trabajo de los adaptadores (`CryptoIdGenerator`,
+`CryptoTicketCodeGenerator`), en `infrastructure/`.
 
 ---
 
@@ -235,7 +249,7 @@ Un agregado **rico**: sin setters; cambia con métodos que expresan una **intenc
 // src/catalog/domain/entities/event.ts (lo esencial)
 export class Event extends AggregateRoot {
   /** RN-003: solo se programa a futuro. Nace SCHEDULED, versión 0, y registra EventScheduled. */
-  static schedule(props: ScheduleEventProps, now = new Date()): Event {
+  static schedule(props: ScheduleEventProps, now: Date): Event {   // `now` lo da el caso de uso (puerto Clock)
     if (!props.startsAt.isAfter(now)) throw new EventStartInPastError();
     const event = new Event(props.id, props.name, props.venue, props.startsAt, props.capacity,
                             props.price, EventStatus.scheduled(), now, now, 0);
@@ -244,7 +258,7 @@ export class Event extends AggregateRoot {
   }
 
   /** RN-007: solo se cancela si está programado y no ha empezado. */
-  cancel(now = new Date()): void {
+  cancel(now: Date): void {
     if (this._status.isCancelled()) throw new EventAlreadyCancelledError(this._id.value);
     if (this.hasStarted(now)) throw new EventAlreadyStartedError(this._id.value);
     this._status = EventStatus.cancelled();
@@ -274,7 +288,7 @@ export interface EventRepository {
   save(event: Event): Promise<void>;
   findById(id: EventId): Promise<Event | null>;                       // null, NO lanza
   findByVenueAndStart(venue: Venue, startsAt: EventStart): Promise<Event | null>;
-  search(criteria: { status?: EventStatus }): Promise<Event[]>;
+  search(criteria: { status?: EventStatus; limit: number; offset: number }): Promise<Event[]>; // paginado
 }
 ```
 > 💡 `findById` devuelve `null` porque decidir si "no existir" es un error de negocio le
@@ -316,7 +330,10 @@ async execute(command: ScheduleEventCommand) {
   if (await this.events.findByVenueAndStart(venue, startsAt)) { // 2. comprobar (RN-006)
     throw new EventSlotTakenError(venue.value, startsAt.value);
   }
-  const event = Event.schedule({ id: EventId.generate(), name, venue, startsAt, capacity, price }); // 3. dominio
+  const event = Event.schedule(                                    // 3. dominio
+    { id: EventId.create(this.ids.generate()), name, venue, startsAt, capacity, price },
+    this.clock.now(),                                              //    reloj e ids: puertos
+  );
 
   await this.events.save(event);                                    // 4. persistir
   await this.eventPublisher.publishAll(event.pullDomainEvents());   // 5. publicar DESPUÉS
@@ -328,8 +345,11 @@ async execute(command: ScheduleEventCommand) {
 
 Prueba **sin Nest y sin base de datos**:
 ```ts
-const handler = new ScheduleEventHandler(new InMemoryEventRepository(), new InMemoryDomainEventPublisher());
-const { id } = await handler.execute(new ScheduleEventCommand('Rock', 'Estadio', FUTURE, 500, 4500, 'PEN'));
+const handler = new ScheduleEventHandler(
+  new InMemoryEventRepository(), new InMemoryDomainEventPublisher(),
+  new FixedClock('2030-01-01T10:00:00Z'), new CryptoIdGenerator(),
+);
+const { id } = await handler.execute(new ScheduleEventCommand('Rock', 'Estadio', '2030-01-31T21:00:00Z', 500, 4500, 'PEN'));
 ```
 
 **Punto de control**: `pnpm test` · commit.
@@ -343,14 +363,16 @@ Aquí está lo más interesante del proyecto.
 ### 8.1 Modelo propio, no compartido
 La venta **no** usa `EventId` ni `TicketPrice` del catálogo: tiene `EventReference`, `Money`
 y `SaleableEvent` ("lo que la venta necesita saber de un evento": aforo, inicio, precio,
-¿se puede vender?).
+¿está programado o cancelado?).
 
 ### 8.2 El cupo: el agregado que impide sobrevender (ADR-012)
 ```ts
 // src/ticketing/domain/entities/ticket-allocation.ts (lo esencial)
-sell(quantity: Quantity, now = new Date()): Money {
+sell(quantity: Quantity, heldByHolder: number, now: Date): Money {
   if (!this._status.isOpen()) throw new SalesClosedError(this._eventId.value);              // RN-010
   if (this._startsAt.getTime() <= now.getTime()) throw new EventAlreadyStartedError(...);   // RN-010
+  if (heldByHolder + quantity.value > MAX_TICKETS_PER_HOLDER)                               // RN-008
+    throw new HolderTicketLimitExceededError(MAX_TICKETS_PER_HOLDER, heldByHolder);
   if (quantity.value > this.available) throw new NotEnoughTicketsError(quantity.value, this.available); // RN-009
   this._sold += quantity.value;
   this.record(new TicketsSold(this._eventId.value, quantity.value, this.available, now));
@@ -361,14 +383,23 @@ sell(quantity: Quantity, now = new Date()): Money {
 > 💡 **¿Por qué un agregado aparte para el cupo?** Un agregado es la frontera de
 > consistencia: "vendidas ≤ aforo" debe vivir dentro de **uno**. Si contaras entradas
 > (`COUNT(*)`) antes de vender, dos compras simultáneas contarían lo mismo y venderían de más.
+>
+> Si un evento se cancela sin haber vendido nada, el cierre crea un cupo **ya cerrado**
+> (`TicketAllocation.closedFor`): así una primera compra que llegue tarde choca con él y no
+> puede abrir la venta de un evento cancelado (ADR-013).
 
 ### 8.3 La entrada
 `Ticket` guarda **solo el hash** de su código (`TicketCodeHash`), el titular, el precio
 pagado y el estado `ISSUED → USED | REFUNDED`:
 ```ts
-checkIn(now = new Date()): void {                       // RN-013
-  if (this._status.isUsed()) throw new TicketAlreadyUsedError(this._id.value);
-  if (this._status.isRefunded()) throw new TicketRefundedError(this._id.value);
+checkIn(event: SaleableEvent, now: Date): void {
+  if (!event.id.equals(this._eventId)) throw new TicketForAnotherEventError();      // RN-016: su evento
+  if (this._status.isUsed()) throw new TicketAlreadyUsedError(this._id.value);      // RN-013
+  if (this._status.isRefunded()) throw new TicketRefundedError(this._id.value);     // RN-013
+  if (event.isCancelled()) throw new TicketEventCancelledError(this._eventId.value); // RN-016
+  // RN-016: puertas desde 12 h antes hasta 24 h después del inicio
+  if (now < opensAt) throw new CheckInNotOpenError(opensAt);
+  if (now > closesAt) throw new CheckInClosedError(closesAt);
   this._status = TicketStatus.used();
   this._usedAt = now;
   this.record(new TicketCheckedIn(this._id.value, this._eventId.value, now));
@@ -376,8 +407,10 @@ checkIn(now = new Date()): void {                       // RN-013
 ```
 
 ### 8.4 El código secreto
-`TicketCode.generate()` crea `XXXX-XXXX-XXXX` con azar criptográfico y sin letras ambiguas
-(0/O, 1/I/L). `toString()` y `toJSON()` devuelven `[REDACTED]` para que nunca acabe en un log.
+El puerto `TicketCodeGenerator` (adaptador `CryptoTicketCodeGenerator`) crea
+`XXXX-XXXX-XXXX` con azar criptográfico y sin letras ambiguas (0/O, 1/I/L). El value object
+`TicketCode` solo valida el formato; `toString()` y `toJSON()` devuelven `[REDACTED]` para
+que nunca acabe en un log.
 
 **Referencia**: `src/ticketing/domain/**` y sus `.spec.ts`.
 
@@ -392,28 +425,40 @@ checkIn(now = new Date()): void {                       // RN-013
 
 | Tipo | Caso de uso | Qué orquesta |
 |---|---|---|
-| Command | `PurchaseTickets` | cupo (o abrirlo consultando el catálogo) → `sell` → guardar con reintentos → emitir entradas (solo hash) → releer cupo (¿cancelado?) → publicar |
-| Command | `CheckInTicket` | hash del código → buscar → `checkIn` → guardar |
-| Command | `CloseEventSales` | interno (lo dispara un evento): cerrar cupo + reembolsar no usadas |
+| Command | `PurchaseTickets` | preguntar al catálogo (¿existe? ¿cancelado?) → **en una transacción**: cupo (o abrirlo) → contar entradas del titular → `sell` → guardar cupo → emitir entradas (solo hash) → reintentar entera si chocó → publicar |
+| Command | `CheckInTicket` | evento de la puerta (catálogo) → hash del código → buscar → `checkIn(evento, ahora)` → guardar |
+| Command | `CloseEventSales` | interno (lo dispara un evento): comprobar que está cancelado → cerrar el cupo (o crearlo cerrado) → reembolsar por lotes |
+| Command | `ReconcileSales` | recuperación: cupos abiertos de eventos cancelados → `CloseEventSales` |
 | Query | `GetTicket`, `GetEventAvailability` | vistas sin código ni hash |
 
 Puertos propios de la venta: `TicketAllocationRepository`, `TicketRepository`,
-`EventCatalog` (para preguntar al catálogo) y `TicketCodeHasher`.
+`EventCatalog` (para preguntar al catálogo), `TicketCodeHasher` y `TicketCodeGenerator`; y
+los compartidos `Clock`, `IdGenerator`, `UnitOfWork` y `DomainEventPublisher`.
 
-### Reintentos ante compras simultáneas
+### Transacción y reintentos ante compras simultáneas
 ```ts
 for (let attempt = 1; ; attempt++) {
-  const allocation = (await this.allocations.findByEvent(eventId)) ?? (await this.openSales(eventId));
-  const total = allocation.sell(quantity);
   try {
-    await this.allocations.save(allocation);       // falla si otra compra lo cambió (versión)
-    return { allocation, total };
+    const purchase = await this.unitOfWork.run(async () => {        // todo o nada (ADR-013)
+      const now = this.clock.now();
+      const allocation = (await this.allocations.findByEvent(eventId)) ?? TicketAllocation.open(event, now);
+      const held = await this.tickets.countActiveByEventAndHolder(eventId, holderEmail);
+      const total = allocation.sell(quantity, held, now);
+      await this.allocations.save(allocation);   // falla si otra operación cambió el cupo (versión)
+      /* ...emitir y guardar cada entrada (solo el hash de su código)... */
+      return { allocation, issued, total };
+    });
+    await this.eventPublisher.publishAll(/* eventos del cupo y de las entradas */); // tras el COMMIT
+    return /* ids, códigos y total */;
   } catch (error) {
     if (!(error instanceof SalesConcurrentModificationError) || attempt >= PURCHASE_MAX_ATTEMPTS) throw error;
-    await backoff(attempt);                        // espera aleatoria: no volver a chocar a la vez
+    await backoff(attempt, RETRY_JITTER_MS);       // espera aleatoria: no volver a chocar a la vez
   }
 }
 ```
+> 💡 Si algo falla a mitad (por ejemplo, al guardar la tercera entrada), la transacción se
+> deshace: el cupo nunca cuenta plazas sin entrada. En las pruebas unitarias se usa
+> `InMemoryUnitOfWork`; el `ROLLBACK` real se prueba en e2e contra PostgreSQL.
 
 **Punto de control**: `pnpm test` (todas las reglas probadas **sin base de datos ni HTTP**) · commit.
 
@@ -434,6 +479,9 @@ export class EnvironmentVariables {
   @IsInt() @Min(1) @Max(65535) PORT: number;
   // ... DB_HOST, DB_PORT, DB_USER, DB_PASSWORD, DB_NAME
   @IsString() @MinLength(32) TICKET_CODE_SECRET: string;        // secreto del HMAC
+  @IsString() @MinLength(32) ORGANIZER_API_KEY: string;         // clave del organizador
+  @IsString() @MinLength(32) GATE_API_KEY: string;              // clave de la puerta
+  // ... THROTTLE_TTL_SECONDS, THROTTLE_LIMIT, THROTTLE_SENSITIVE_LIMIT, TRUST_PROXY
   @ValidateIf((env) => env.NODE_ENV === 'test') @IsString() @IsNotEmpty() DB_NAME_TEST?: string;
 }
 ```
@@ -537,11 +585,21 @@ export class TicketsController {
   constructor(private readonly commandBus: CommandBus, private readonly queryBus: QueryBus) {}
 
   @Post()
+  @SensitiveRoute()                                   // límite de peticiones estricto
   purchase(@Body() dto: PurchaseTicketsDto) {
     return this.commandBus.execute(new PurchaseTicketsCommand(dto.eventId, dto.quantity, dto.holderName, dto.holderEmail));
   }
+
+  @Post('check-in')
+  @SensitiveRoute()
+  @RequireRoles(Role.GATE, Role.ORGANIZER)            // solo el personal (clave de API)
+  checkIn(@Body() dto: CheckInDto) {
+    return this.commandBus.execute(new CheckInTicketCommand(dto.eventId, dto.code));
+  }
 }
 ```
+> 💡 La autenticación (`ApiKeyGuard`) y el límite de peticiones (`ThrottlerGuard`) son
+> *guards* globales de infraestructura: el dominio y los casos de uso no se enteran (ADR-014).
 
 ### Filtro único de errores de dominio
 ```ts
@@ -598,8 +656,10 @@ export class CloseSalesOnEventCancelledListener implements IEventHandler<EventCa
   }
 }
 ```
-> 💡 El catálogo **no sabe** que la venta existe. Y si una compra coincide con la
-> cancelación, la compra relee el cupo al final y reembolsa sus entradas (RN-014).
+> 💡 El catálogo **no sabe** que la venta existe. Si una compra coincide con la
+> cancelación, el cupo las ordena: o la compra ve la venta cerrada, o el cierre encuentra
+> (y reembolsa) sus entradas (ADR-013). Si el oyente falla, reintenta; y lo que quede lo
+> recoge la conciliación al arrancar o con `POST /tickets/sales/reconcile` (ADR-016).
 
 ---
 
@@ -642,7 +702,7 @@ it('domain/ never imports frameworks', () => {
 ## Fase 17 — Documentación y autoevaluación
 
 - `README.md`: instalación desde cero, comandos, endpoints, arquitectura.
-- `docs/business-rules/`: RN-001…RN-015 → archivo que las implementa → prueba.
+- `docs/business-rules/`: RN-001…RN-016 → estado → archivo que las implementa → prueba.
 - `docs/decisions/`: ADRs (contexto → decisión → **porqué** → consecuencias → alternativas).
 - `docs/technical-debt.md`: lo que no está resuelto, con honestidad.
 
@@ -709,18 +769,26 @@ Practícalas **en voz alta**.
 > El secreto del HMAC impide que alguien con una copia de la base pruebe códigos.
 
 **12. ¿Qué pasa si se cancela un evento mientras alguien compra?**
-> La cancelación cierra el cupo antes de buscar entradas; la compra guarda sus entradas
-> antes de releer el cupo. Así, al menos uno ve al otro: o la cancelación reembolsa esas
-> entradas, o la compra ve el cupo cerrado y reembolsa las suyas. Hay una prueba que falla
-> si quito esa compensación.
+> El cupo es el punto donde se encuentran. La compra guarda el cupo y sus entradas en una
+> transacción; el cierre también escribe el cupo, o lo crea ya cerrado si el evento no había
+> vendido nada. Por la clave primaria y la versión, uno de los dos choca y reintenta: o la
+> compra ve la venta cerrada (409), o el cierre encuentra las entradas confirmadas y las
+> reembolsa. Hay una prueba unitaria que reproduce la carrera de la primera compra y una e2e
+> con compras y cancelaciones simultáneas; las dos fallan si quito el cupo cerrado.
 
 **13. ¿Por qué no `synchronize: true`?**
 > Cambia el esquema automáticamente, sin historial y con riesgo de perder datos. Además mi
 > índice único es funcional (`lower(venue)`), algo que solo puedo expresar en una migración.
 
-**14. ¿Qué no está resuelto?**
-> Autenticación, pasarela de pago, rate limiting, outbox para eventos y la compra sin
-> transacción común. Está en `docs/technical-debt.md`.
+**14. ¿Quién puede cancelar un evento o ver los datos de un comprador?**
+> Solo el personal. Las rutas del personal exigen una clave de API por rol (organizador o
+> puerta) en `Authorization: Bearer`; sin clave es 401 y con la de otro rol, 403. Además hay
+> un límite de peticiones por IP, más estricto en la compra y el check-in.
+
+**15. ¿Qué no está resuelto?**
+> Pasarela de pago, usuarios individuales (las claves son por rol), outbox para los eventos
+> (mitigado con reintentos y conciliación), límite de peticiones compartido entre varias
+> instancias y solapamiento de eventos en un recinto. Está en `docs/technical-debt.md`.
 
 ---
 

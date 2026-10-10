@@ -13,8 +13,16 @@ hacer que la aplicación arranque contra un destino equivocado sin que nadie lo 
 - Con `NODE_ENV=test` se usa `DB_NAME_TEST`; el e2e se niega a ejecutarse si coincide
   con `DB_NAME`.
 - `docker-compose.yml` lee el mismo `.env` y usa `${VAR:?}` para fallar si falta algo.
-- Los secretos de la aplicación (como `TICKET_CODE_SECRET`, mínimo 32 caracteres) también
-  se validan al arrancar y llegan a los adaptadores por `ConfigService` (factoría del módulo).
+- Los secretos de la aplicación (`TICKET_CODE_SECRET`, `ORGANIZER_API_KEY`, `GATE_API_KEY`,
+  mínimo 32 caracteres) también se validan al arrancar y llegan a los adaptadores por
+  `ConfigService`. Hay reglas entre variables: las dos claves de API deben ser distintas y
+  `THROTTLE_SENSITIVE_LIMIT ≤ THROTTLE_LIMIT`.
+- Los valores de ejemplo de `.env.example` llevan el marcador `change-me`. Son públicos, así
+  que con `NODE_ENV=production` la validación **rechaza** `DB_PASSWORD`, `TICKET_CODE_SECRET`,
+  `ORGANIZER_API_KEY` y `GATE_API_KEY` si lo contienen.
+- `TRUST_PROXY` se convierte a booleano a mano: la conversión implícita de
+  `class-transformer` haría `Boolean("false") === true`; cualquier valor distinto de
+  `true`/`false` falla.
 
 ## Por qué
 - Fallar al arrancar es más barato que diagnosticar un comportamiento incorrecto en ejecución.
@@ -24,6 +32,8 @@ hacer que la aplicación arranque contra un destino equivocado sin que nadie lo 
 
 ## Consecuencias
 - Hay que copiar `.env.example` a `.env` antes del primer arranque (documentado en el README).
+- Un despliegue a producción con la configuración de ejemplo no arranca: hay que generar
+  secretos reales (es la intención).
 
 ## Alternativas descartadas
 - Defaults en código: ocultan errores de configuración.

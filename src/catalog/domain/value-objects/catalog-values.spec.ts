@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { DomainErrorKind } from '../../../shared/domain/domain-exception';
 import {
   InvalidCapacityError,
@@ -120,8 +121,23 @@ describe('EventStatus / EventId', () => {
   });
 
   it('validates and normalizes ids', () => {
-    const id = EventId.generate();
+    const id = EventId.create(randomUUID());
     expect(EventId.create(id.value.toUpperCase()).equals(id)).toBe(true);
     expect(() => EventId.create('nope')).toThrow(InvalidEventIdError);
+  });
+
+  it('never echoes the received value in the error message (no reflected input)', () => {
+    expect(() => EventId.create('<script>x</script>')).toThrow(expect.objectContaining({ message: expect.not.stringContaining('<script>') }));
+    expect(() => EventStatus.create('<b>bad</b>')).toThrow(expect.objectContaining({ message: expect.not.stringContaining('<b>') }));
+  });
+});
+
+describe('Unicode normalization (NFC)', () => {
+  it('stores names and venues in composed form, so equal texts compare equal', () => {
+    const composed = 'Caf\u00e9 Teatro';
+    const decomposed = 'Cafe\u0301 Teatro';
+    expect(Venue.create(decomposed).value).toBe(composed);
+    expect(Venue.create(decomposed).equals(Venue.create(composed))).toBe(true);
+    expect(EventName.create(decomposed).value).toBe(composed);
   });
 });

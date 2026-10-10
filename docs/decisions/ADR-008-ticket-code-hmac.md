@@ -6,8 +6,10 @@ claro, ni aparecer en respuestas posteriores, logs o eventos. Además la puerta 
 encontrar la entrada **a partir del código** rápidamente.
 
 ## Decisión
-- `TicketCode.generate()` crea un código `XXXX-XXXX-XXXX` con un generador criptográfico
-  (`crypto.randomInt`) sobre un alfabeto sin caracteres ambiguos (31 símbolos → ~59 bits).
+- El puerto `TicketCodeGenerator` (adaptador `CryptoTicketCodeGenerator`) crea un código
+  `XXXX-XXXX-XXXX` con un generador criptográfico (`crypto.randomInt`) sobre un alfabeto sin
+  caracteres ambiguos (31 símbolos, 12 posiciones: 31¹² ≈ 2⁵⁹). El value object `TicketCode`
+  solo valida y normaliza el formato; el azar vive en infraestructura (ADR-015).
 - Puerto `TicketCodeHasher` en `ticketing/domain/ports`; adaptador `HmacTicketCodeHasher`:
   **HMAC-SHA256** con un secreto del servidor (`TICKET_CODE_SECRET`, ≥ 32 caracteres).
 - Solo se guarda el hash (`code_hash`, único). El código se devuelve **una vez**, en la
@@ -22,6 +24,9 @@ encontrar la entrada **a partir del código** rápidamente.
   de códigos candidatos sin límite. Con HMAC necesita también el secreto del servidor, que
   no está en la base.
 - Todo con `node:crypto`, sin dependencias nativas.
+
+- El check-in exige la clave del personal de puerta y tiene un límite estricto de peticiones
+  por IP (ADR-014): además de inviable por entropía, probar códigos a ciegas queda frenado.
 
 ## Consecuencias
 - Si se pierde o rota `TICKET_CODE_SECRET`, los códigos emitidos dejan de validarse:

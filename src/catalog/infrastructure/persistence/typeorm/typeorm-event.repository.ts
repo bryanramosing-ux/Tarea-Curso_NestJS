@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
 import { FindOptionsWhere, QueryFailedError, Repository } from 'typeorm';
+import { TypeOrmTransactionContext } from '../../../../shared/infrastructure/persistence/typeorm-transaction-context';
 import { Event } from '../../../domain/entities/event';
 import { EventConcurrentModificationError, EventSlotTakenError } from '../../../domain/errors/event.errors';
 import { EventRepository, EventSearchCriteria } from '../../../domain/ports/event.repository';
@@ -20,13 +20,15 @@ export const EVENTS_VENUE_START_UNIQUE_INDEX = 'uq_events_venue_starts_at';
  *    si la versión almacenada sigue siendo la leída (bloqueo optimista);
  *  - la violación del índice único recinto + hora se traduce a RN-006, que la
  *    base garantiza incluso ante dos programaciones simultáneas.
+ * Usa la transacción en curso si la hay (TypeOrmTransactionContext).
  */
 @Injectable()
 export class TypeOrmEventRepository implements EventRepository {
-  constructor(
-    @InjectRepository(EventOrmEntity)
-    private readonly repository: Repository<EventOrmEntity>,
-  ) {}
+  constructor(private readonly context: TypeOrmTransactionContext) {}
+
+  private get repository(): Repository<EventOrmEntity> {
+    return this.context.getRepository(EventOrmEntity);
+  }
 
   async save(event: Event): Promise<void> {
     const row = EventMapper.toPersistence(event);
@@ -55,9 +57,10 @@ export class TypeOrmEventRepository implements EventRepository {
   }
 
   async findByVenueAndStart(venue: Venue, startsAt: EventStart): Promise<Event | null> {
+    // LOWER() a ambos lados: compara con la MISMA función que el índice único lower(venue).
     const row = await this.repository
       .createQueryBuilder('event')
-      .where('LOWER(event.venue) = :venue', { venue: venue.key })
+      .where('LOWER(event.venue) = LOWER(:venue)', { venue: venue.value })
       .andWhere('event.startsAt = :startsAt', { startsAt: startsAt.value })
       .getOne();
     return row ? EventMapper.toDomain(row) : null;
@@ -68,7 +71,12 @@ export class TypeOrmEventRepository implements EventRepository {
     if (criteria.status) {
       where.status = criteria.status.value;
     }
-    const rows = await this.repository.find({ where, order: { startsAt: 'ASC', id: 'ASC' } });
+    const rows = await this.repository.find({
+      where,
+      order: { startsAt: 'ASC', id: 'ASC' },
+      take: criteria.limit,
+      skip: criteria.offset,
+    });
     return rows.map((row) => EventMapper.toDomain(row));
   }
 

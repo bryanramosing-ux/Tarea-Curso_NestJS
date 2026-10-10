@@ -9,7 +9,9 @@ el `domain/` de otro contexto.
 1. **Consulta**: la venta define su propio puerto `EventCatalog` en `ticketing/domain/ports`.
    El adaptador `CatalogEventCatalog` (`ticketing/infrastructure/adapters`) ejecuta
    `GetEventQuery` por el `QueryBus` (API pública de lectura del catálogo) y traduce la
-   `EventView` a `SaleableEvent`. Un `EVENT_NOT_FOUND` se traduce a `null`.
+   `EventView` a `SaleableEvent`. Un `EVENT_NOT_FOUND` se traduce a `null`. La compra, la
+   disponibilidad, el check-in y el cierre de ventas lo consultan en **cada** operación:
+   el catálogo es la fuente de verdad de si un evento está cancelado (ADR-016).
 2. **Reacción**: el oyente `CloseSalesOnEventCancelledListener`
    (`ticketing/infrastructure/event-handlers`) escucha `EventCancelled` y despacha el
    comando propio `CloseEventSalesCommand`. Las reglas viven en `TicketAllocation.close` y `Ticket.refund`.
@@ -25,7 +27,8 @@ el `domain/` de otro contexto.
 ## Consecuencias
 - El cierre de ventas tras una cancelación es eventualmente consistente (EventBus en
   memoria). Para que ninguna compra simultánea deje entradas válidas de un evento
-  cancelado, la compra relee el cupo tras emitir sus entradas y se compensa (RN-014).
+  cancelado, el cupo serializa compra y cierre (ADR-013) y, para que un cierre perdido no
+  deje la venta abierta, la venta consulta el catálogo y existe una conciliación (ADR-016).
 - `ticketing/infrastructure` importa `catalog/application/queries/get-event` y
   `catalog/domain/events/event-cancelled.event` (contratos públicos). Ningún archivo de
   `ticketing/domain` ni `ticketing/application` importa nada del catálogo (verificado por test).

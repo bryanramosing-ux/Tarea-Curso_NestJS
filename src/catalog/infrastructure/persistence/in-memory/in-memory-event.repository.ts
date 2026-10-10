@@ -48,6 +48,7 @@ export class InMemoryEventRepository implements EventRepository {
     return [...this.rows.values()]
       .filter((row) => !criteria.status || row.status === criteria.status.value)
       .sort((a, b) => a.startsAt.getTime() - b.startsAt.getTime() || a.id.localeCompare(b.id))
+      .slice(criteria.offset, criteria.offset + criteria.limit)
       .map((row) => Event.fromPrimitives({ ...row }));
   }
 }

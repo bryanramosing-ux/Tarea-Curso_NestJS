@@ -1,8 +1,9 @@
 import { DomainErrorKind, DomainException } from '../../../shared/domain/domain-exception';
 
+/** El mensaje nunca repite el valor recibido (no se refleja la entrada del cliente). */
 export class InvalidEventIdError extends DomainException {
-  constructor(value: string) {
-    super('EVENT_INVALID_ID', DomainErrorKind.VALIDATION, `"${value}" is not a valid event id`);
+  constructor() {
+    super('EVENT_INVALID_ID', DomainErrorKind.VALIDATION, 'Event id must be a UUID');
   }
 }
 
@@ -52,8 +53,8 @@ export class InvalidTicketPriceError extends DomainException {
 }
 
 export class InvalidEventStatusError extends DomainException {
-  constructor(value: string) {
-    super('EVENT_INVALID_STATUS', DomainErrorKind.VALIDATION, `"${value}" is not a valid event status (SCHEDULED, CANCELLED)`);
+  constructor() {
+    super('EVENT_INVALID_STATUS', DomainErrorKind.VALIDATION, 'Event status must be SCHEDULED or CANCELLED');
   }
 }
 

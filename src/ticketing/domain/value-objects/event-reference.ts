@@ -12,7 +12,7 @@ export class EventReference {
   static create(value: string): EventReference {
     const normalized = typeof value === 'string' ? value.trim().toLowerCase() : '';
     if (!isValidUuid(normalized)) {
-      throw new InvalidEventReferenceError(String(value));
+      throw new InvalidEventReferenceError();
     }
     return new EventReference(normalized);
   }

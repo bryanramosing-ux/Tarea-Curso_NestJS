@@ -1,7 +1,7 @@
 import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
 import { DataSource } from 'typeorm';
-import { purchase, scheduleEvent } from './support/fixtures';
+import { asGate, asOrganizer, cancelEvent, checkIn, inHours, purchase, scheduleEvent } from './support/fixtures';
 import { createTestApp, eventually, resetDatabase } from './support/test-app';
 
 const UNKNOWN_ID = '6fa459ea-ee8a-4ca4-894e-db77e160355e';
@@ -23,8 +23,9 @@ describe('Ticketing (e2e, PostgreSQL real)', () => {
     await app.close();
   });
 
-  const checkIn = (code: string) => http().post('/tickets/check-in').send({ code });
-  const ticket = async (id: string) => (await http().get(`/tickets/${id}`).expect(200)).body;
+  const ticket = async (id: string) => (await http().get(`/tickets/${id}`).set(asGate()).expect(200)).body;
+  /** Evento que empieza en 2 h: ya se puede entrar (las puertas abren 12 h antes, RN-016). */
+  const eventWithOpenDoors = (capacity = 100) => scheduleEvent(app, { startsAt: inHours(2), capacity });
 
   describe('POST /tickets (purchase)', () => {
     it('201: issues the tickets, charges price × quantity and returns each code once (RN-015)', async () => {
@@ -88,7 +89,7 @@ describe('Ticketing (e2e, PostgreSQL real)', () => {
       const eventId = await scheduleEvent(app, { capacity: 3 });
       await purchase(app, eventId, 2).expect(201);
 
-      const response = await purchase(app, eventId, 2).expect(409);
+      const response = await purchase(app, eventId, 2, 'otra@mail.com').expect(409);
 
       expect(response.body.code).toBe('TICKET_NOT_ENOUGH_AVAILABLE');
       expect((await http().get(`/tickets/availability/${eventId}`).expect(200)).body).toMatchObject({
@@ -99,33 +100,104 @@ describe('Ticketing (e2e, PostgreSQL real)', () => {
       });
     });
 
+    it('409: one holder cannot accumulate more than 10 tickets per event, across purchases (RN-008)', async () => {
+      const eventId = await scheduleEvent(app, { capacity: 100 });
+      await purchase(app, eventId, 8, 'fan@mail.com').expect(201);
+
+      const response = await purchase(app, eventId, 3, 'FAN@mail.com').expect(409);
+
+      expect(response.body.code).toBe('TICKET_HOLDER_LIMIT_EXCEEDED');
+      await purchase(app, eventId, 2, 'fan@mail.com').expect(201);
+      await purchase(app, eventId, 3, 'otra@mail.com').expect(201);
+    });
+
     it('409: a cancelled event does not sell tickets (RN-010)', async () => {
       const eventId = await scheduleEvent(app);
-      await http().post(`/events/${eventId}/cancel`).expect(204);
+      await cancelEvent(app, eventId).expect(204);
       expect((await purchase(app, eventId).expect(409)).body.code).toBe('TICKET_SALES_CLOSED');
+    });
+
+    it('409: a cancelled event does not sell even if its allocation was left OPEN (failed automatic close)', async () => {
+      const eventId = await scheduleEvent(app);
+      await purchase(app, eventId, 1).expect(201);
+      // Simula que el cierre automático nunca ocurrió: el catálogo cancela, el cupo sigue abierto.
+      await dataSource.query(`UPDATE events SET status = 'CANCELLED', version = version + 1 WHERE id = $1`, [eventId]);
+
+      expect((await purchase(app, eventId).expect(409)).body.code).toBe('TICKET_SALES_CLOSED');
+      expect((await http().get(`/tickets/availability/${eventId}`).expect(200)).body.salesOpen).toBe(false);
     });
   });
 
-  describe('POST /tickets/check-in (RN-013)', () => {
+  describe('POST /tickets/check-in (RN-013, RN-016)', () => {
     it('200 once, then 409 TICKET_ALREADY_USED', async () => {
-      const eventId = await scheduleEvent(app);
+      const eventId = await eventWithOpenDoors();
       const [{ id, code }] = (await purchase(app, eventId).expect(201)).body.tickets;
 
-      expect((await checkIn(code.toLowerCase()).expect(200)).body).toEqual({ id });
+      expect((await checkIn(app, eventId, code.toLowerCase()).expect(200)).body).toEqual({ id });
       expect(await ticket(id)).toMatchObject({ status: 'USED', usedAt: expect.any(String) });
-      expect((await checkIn(code).expect(409)).body.code).toBe('TICKET_ALREADY_USED');
+      expect((await checkIn(app, eventId, code).expect(409)).body.code).toBe('TICKET_ALREADY_USED');
     });
 
-    it('404: unknown code / 400: malformed code', async () => {
-      expect((await checkIn('AAAA-BBBB-CCCC').expect(404)).body.code).toBe('TICKET_NOT_FOUND');
-      expect((await checkIn('hola').expect(400)).body.code).toBe('TICKET_INVALID_CODE');
+    it('409: a valid ticket is not accepted at the door of another event', async () => {
+      const eventId = await eventWithOpenDoors();
+      const otherEventId = await eventWithOpenDoors();
+      const [{ id, code }] = (await purchase(app, eventId).expect(201)).body.tickets;
+
+      expect((await checkIn(app, otherEventId, code).expect(409)).body.code).toBe('TICKET_WRONG_EVENT');
+      expect((await ticket(id)).status).toBe('ISSUED');
+    });
+
+    it('409: doors are not open yet (more than 12 h before the start)', async () => {
+      const eventId = await scheduleEvent(app, { startsAt: inHours(48) });
+      const [{ code }] = (await purchase(app, eventId).expect(201)).body.tickets;
+
+      expect((await checkIn(app, eventId, code).expect(409)).body.code).toBe('TICKET_CHECK_IN_NOT_OPEN');
+    });
+
+    it('409: the ticket of a cancelled event is rejected even before it is refunded', async () => {
+      const eventId = await eventWithOpenDoors();
+      const [{ code }] = (await purchase(app, eventId).expect(201)).body.tickets;
+      await dataSource.query(`UPDATE events SET status = 'CANCELLED', version = version + 1 WHERE id = $1`, [eventId]);
+
+      expect((await checkIn(app, eventId, code).expect(409)).body.code).toBe('TICKET_EVENT_CANCELLED');
+    });
+
+    it('404: unknown code / 400: malformed code or event id', async () => {
+      const eventId = await eventWithOpenDoors();
+      expect((await checkIn(app, eventId, 'AAAA-BBBB-CCCC').expect(404)).body.code).toBe('TICKET_NOT_FOUND');
+      expect((await checkIn(app, eventId, 'hola').expect(400)).body.code).toBe('TICKET_INVALID_CODE');
+      expect((await checkIn(app, 'nope', 'AAAA-BBBB-CCCC').expect(400)).body.code).toBe('REQUEST_VALIDATION_FAILED');
+    });
+  });
+
+  describe('authentication and authorization of staff routes', () => {
+    it('401 without a key, 403 with the key of another role, on every protected route', async () => {
+      const eventId = await eventWithOpenDoors();
+      const [{ id, code }] = (await purchase(app, eventId).expect(201)).body.tickets;
+
+      const unauthorized = await http().get(`/tickets/${id}`).expect(401);
+      expect(unauthorized.body.code).toBe('UNAUTHORIZED');
+      expect(unauthorized.headers['www-authenticate']).toBe('Bearer');
+      await http().post('/tickets/check-in').send({ eventId, code }).expect(401);
+      await http().post('/tickets/sales/reconcile').set(asGate()).expect(403);
+      await http().post(`/events/${eventId}/cancel`).set(asGate()).expect(403);
+      await http().get(`/tickets/${id}`).set({ Authorization: 'Bearer wrong-key-0123456789abcdef0123456789' }).expect(401);
+
+      // El organizador también puede consultar entradas y hacer check-in.
+      await http().get(`/tickets/${id}`).set(asOrganizer()).expect(200);
+    });
+
+    it('public routes stay public: buying and checking availability need no key', async () => {
+      const eventId = await scheduleEvent(app);
+      await purchase(app, eventId).expect(201);
+      await http().get(`/tickets/availability/${eventId}`).expect(200);
     });
   });
 
   describe('GET /tickets/:id and /tickets/availability/:eventId', () => {
     it('404 / 400 for unknown or malformed ids', async () => {
-      expect((await http().get(`/tickets/${UNKNOWN_ID}`).expect(404)).body.code).toBe('TICKET_NOT_FOUND');
-      await http().get('/tickets/123').expect(400);
+      expect((await http().get(`/tickets/${UNKNOWN_ID}`).set(asGate()).expect(404)).body.code).toBe('TICKET_NOT_FOUND');
+      await http().get('/tickets/123').set(asGate()).expect(400);
       expect((await http().get(`/tickets/availability/${UNKNOWN_ID}`).expect(404)).body.code).toBe(
         'TICKET_EVENT_NOT_FOUND',
       );
@@ -146,11 +218,11 @@ describe('Ticketing (e2e, PostgreSQL real)', () => {
 
   describe('cross-context event: EventCancelled -> close sales and refund (RN-014)', () => {
     it('refunds unused tickets, keeps used ones and closes the sales', async () => {
-      const eventId = await scheduleEvent(app);
+      const eventId = await eventWithOpenDoors();
       const [used, unused] = (await purchase(app, eventId, 2).expect(201)).body.tickets;
-      await checkIn(used.code).expect(200);
+      await checkIn(app, eventId, used.code).expect(200);
 
-      await http().post(`/events/${eventId}/cancel`).expect(204);
+      await cancelEvent(app, eventId).expect(204);
 
       const refunded = await eventually(
         () => ticket(unused.id),
@@ -159,7 +231,33 @@ describe('Ticketing (e2e, PostgreSQL real)', () => {
       expect(refunded.status).toBe('REFUNDED');
       expect((await ticket(used.id)).status).toBe('USED');
       expect((await http().get(`/tickets/availability/${eventId}`).expect(200)).body.salesOpen).toBe(false);
-      expect((await checkIn(unused.code).expect(409)).body.code).toBe('TICKET_REFUNDED');
+      expect((await checkIn(app, eventId, unused.code).expect(409)).body.code).toBe('TICKET_REFUNDED');
+    });
+
+    it('a cancelled event that never sold gets a CLOSED allocation (a late first purchase cannot open sales)', async () => {
+      const eventId = await scheduleEvent(app);
+      await cancelEvent(app, eventId).expect(204);
+
+      const [row] = await eventually(
+        () => dataSource.query('SELECT status, sold FROM ticket_allocations WHERE event_id = $1', [eventId]),
+        (rows: unknown[]) => rows.length === 1,
+      );
+      expect(row).toEqual({ status: 'CLOSED', sold: 0 });
+    });
+
+    it('POST /tickets/sales/reconcile closes and refunds events whose automatic close was lost', async () => {
+      const eventId = await scheduleEvent(app);
+      const [{ id }] = (await purchase(app, eventId, 1).expect(201)).body.tickets;
+      // El proceso "cayó" después de cancelar y antes de cerrar la venta.
+      await dataSource.query(`UPDATE events SET status = 'CANCELLED', version = version + 1 WHERE id = $1`, [eventId]);
+
+      const response = await http().post('/tickets/sales/reconcile').set(asOrganizer()).expect(200);
+
+      expect(response.body).toEqual({ closedEventIds: [eventId] });
+      expect((await ticket(id)).status).toBe('REFUNDED');
+      expect((await http().post('/tickets/sales/reconcile').set(asOrganizer()).expect(200)).body).toEqual({
+        closedEventIds: [],
+      });
     });
   });
 

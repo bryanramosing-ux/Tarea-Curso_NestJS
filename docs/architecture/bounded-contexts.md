@@ -16,11 +16,13 @@ flowchart LR
     ACL[CatalogEventCatalog<br/>adapter / ACL]
     L[CloseSalesOnEventCancelledListener]
     C[CloseEventSalesCommand]
+    R[ReconcileSalesCommand<br/>al arrancar / bajo demanda]
   end
   P -. implementado por .-> ACL
   ACL -- QueryBus --> GQ
   EC -- EventBus --> L
   L -- CommandBus --> C
+  R -- CommandBus --> C
 ```
 
 Relación: **Customer/Supplier** con **Anti-Corruption Layer** en el lado de la venta.
@@ -36,8 +38,8 @@ Relación: **Customer/Supplier** con **Anti-Corruption Layer** en el lado de la 
 | Reglas | Recinto libre a esa hora, solo a futuro | No sobrevender, uso único, reembolso |
 | Datos sensibles | No | Sí (código de entrada, email del titular) |
 
-Para la venta, un evento es solo "algo con aforo, fecha de inicio, precio y que puede o
-no venderse" (`SaleableEvent`). No necesita el nombre, el recinto ni la cartelera.
+Para la venta, un evento es solo "algo con aforo, fecha de inicio, precio y que está
+programado o cancelado" (`SaleableEvent`). No necesita el nombre, el recinto ni la cartelera.
 Mezclarlos acoplaría la carga de compras al mantenimiento del catálogo.
 
 ## Reglas de aislamiento (verificadas por `test/architecture`)
@@ -49,7 +51,9 @@ Mezclarlos acoplaría la carga de compras al mantenimiento del catálogo.
 - La comunicación ocurre solo en `infrastructure/`:
   - **Consulta síncrona**: `CatalogEventCatalog` (adaptador del puerto propio `EventCatalog`)
     usa la API pública de lectura del catálogo (`GetEventQuery` por `QueryBus`) y traduce
-    `EventView → SaleableEvent`. Un `EVENT_NOT_FOUND` se traduce a `null`.
+    `EventView → SaleableEvent`. Un `EVENT_NOT_FOUND` se traduce a `null`. La compra, la
+    disponibilidad, el check-in y el cierre de ventas lo consultan en cada operación: el
+    catálogo es la fuente de verdad de la cancelación (ADR-016).
   - **Evento asíncrono**: `CloseSalesOnEventCancelledListener` escucha `EventCancelled` y
     despacha el comando propio `CloseEventSalesCommand`.
 
@@ -58,7 +62,7 @@ Mezclarlos acoplaría la carga de compras al mantenimiento del catálogo.
 | Contexto | Escritura (Command) | Lectura (Query) |
 |---|---|---|
 | Catálogo | `ScheduleEvent`, `CancelEvent` | `GetEvent`, `ListEvents` |
-| Venta | `PurchaseTickets`, `CheckInTicket`, `CloseEventSales` (interno, disparado por evento) | `GetTicket`, `GetEventAvailability` |
+| Venta | `PurchaseTickets`, `CheckInTicket`, `CloseEventSales` (interno, disparado por evento), `ReconcileSales` (al arrancar y `POST /tickets/sales/reconcile`) | `GetTicket`, `GetEventAvailability` |
 
 ## Integridad en base de datos
 

@@ -1,6 +1,8 @@
+import { randomUUID } from 'node:crypto';
+import { FixedClock } from '../../../../shared/infrastructure/time/fixed-clock';
 import { InMemoryDomainEventPublisher } from '../../../../shared/infrastructure/events/in-memory-domain-event-publisher';
 import { Event } from '../../../domain/entities/event';
-import { EventAlreadyCancelledError, EventNotFoundError, InvalidEventIdError } from '../../../domain/errors/event.errors';
+import { EventAlreadyCancelledError, EventAlreadyStartedError, EventNotFoundError, InvalidEventIdError } from '../../../domain/errors/event.errors';
 import { EventCancelled } from '../../../domain/events/event-cancelled.event';
 import { Capacity } from '../../../domain/value-objects/capacity';
 import { EventId } from '../../../domain/value-objects/event-id';
@@ -17,19 +19,24 @@ describe('CancelEventHandler', () => {
   let publisher: InMemoryDomainEventPublisher;
   let handler: CancelEventHandler;
   let event: Event;
+  let clock: FixedClock;
 
   beforeEach(async () => {
     events = new InMemoryEventRepository();
     publisher = new InMemoryDomainEventPublisher();
-    handler = new CancelEventHandler(events, publisher);
-    event = Event.schedule({
-      id: EventId.generate(),
-      name: EventName.create('Rock en el Parque'),
-      venue: Venue.create('Estadio Nacional'),
-      startsAt: EventStart.create(new Date(Date.now() + 864e5)),
-      capacity: Capacity.create(10),
-      price: TicketPrice.create(0, 'USD'),
-    });
+    clock = new FixedClock('2030-01-01T10:00:00Z');
+    handler = new CancelEventHandler(events, publisher, clock);
+    event = Event.schedule(
+      {
+        id: EventId.create(randomUUID()),
+        name: EventName.create('Rock en el Parque'),
+        venue: Venue.create('Estadio Nacional'),
+        startsAt: EventStart.create('2030-01-02T21:00:00Z'),
+        capacity: Capacity.create(10),
+        price: TicketPrice.create(0, 'USD'),
+      },
+      clock.now(),
+    );
     event.pullDomainEvents();
     await events.save(event);
   });
@@ -39,11 +46,17 @@ describe('CancelEventHandler', () => {
 
     expect((await events.findById(event.id))?.isCancelled()).toBe(true);
     expect(publisher.published).toEqual([expect.any(EventCancelled)]);
-    expect(publisher.published[0]).toMatchObject({ eventId: event.id.value });
+    expect(publisher.published[0]).toMatchObject({ eventId: event.id.value, occurredOn: clock.now() });
+  });
+
+  it('uses the clock port: an event that already started cannot be cancelled (RN-007)', async () => {
+    clock.set('2030-01-02T21:00:00Z');
+    await expect(handler.execute(new CancelEventCommand(event.id.value))).rejects.toBeInstanceOf(EventAlreadyStartedError);
+    expect(publisher.published).toHaveLength(0);
   });
 
   it('fails with NOT_FOUND / VALIDATION for unknown or malformed ids', async () => {
-    await expect(handler.execute(new CancelEventCommand(EventId.generate().value))).rejects.toBeInstanceOf(
+    await expect(handler.execute(new CancelEventCommand(EventId.create(randomUUID()).value))).rejects.toBeInstanceOf(
       EventNotFoundError,
     );
     await expect(handler.execute(new CancelEventCommand('nope'))).rejects.toBeInstanceOf(InvalidEventIdError);

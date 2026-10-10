@@ -16,7 +16,7 @@ export class SalesStatus {
   static create(value: string): SalesStatus {
     const normalized = typeof value === 'string' ? value.trim().toUpperCase() : '';
     if (!VALID_VALUES.includes(normalized)) {
-      throw new InvalidSalesStatusError(String(value));
+      throw new InvalidSalesStatusError();
     }
     return new SalesStatus(normalized as SalesStatusValue);
   }

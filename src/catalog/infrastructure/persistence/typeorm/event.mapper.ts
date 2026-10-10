@@ -1,22 +1,26 @@
+import { rehydrate } from '../../../../shared/infrastructure/persistence/persisted-data-corrupted.error';
 import { Event } from '../../../domain/entities/event';
 import { EventOrmEntity } from './event.orm-entity';
 
 /** Traduce entre el agregado Event y su modelo de persistencia. */
 export class EventMapper {
+  /** Una fila que viola las reglas del dominio es un fallo del servidor (500), no del cliente. */
   static toDomain(row: EventOrmEntity): Event {
-    return Event.fromPrimitives({
-      id: row.id,
-      name: row.name,
-      venue: row.venue,
-      startsAt: row.startsAt,
-      capacity: row.capacity,
-      priceCents: row.priceCents,
-      currency: row.currency,
-      status: row.status,
-      createdAt: row.createdAt,
-      updatedAt: row.updatedAt,
-      version: row.version,
-    });
+    return rehydrate('events', row.id, () =>
+      Event.fromPrimitives({
+        id: row.id,
+        name: row.name,
+        venue: row.venue,
+        startsAt: row.startsAt,
+        capacity: row.capacity,
+        priceCents: row.priceCents,
+        currency: row.currency,
+        status: row.status,
+        createdAt: row.createdAt,
+        updatedAt: row.updatedAt,
+        version: row.version,
+      }),
+    );
   }
 
   static toPersistence(event: Event): EventOrmEntity {

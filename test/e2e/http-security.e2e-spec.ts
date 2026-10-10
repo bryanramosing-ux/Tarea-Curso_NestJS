@@ -1,6 +1,7 @@
 import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
 import { DataSource } from 'typeorm';
+import { asOrganizer, scheduleEvent } from './support/fixtures';
 import { createTestApp, resetDatabase } from './support/test-app';
 
 /** Endurecimiento del borde HTTP: cabeceras, formato de errores y entradas hostiles. */
@@ -29,7 +30,8 @@ describe('HTTP hardening (e2e)', () => {
   });
 
   it.each([
-    ['malformed JSON', () => http().post('/events').set('Content-Type', 'application/json').send('{"name":'), 400, 'BAD_REQUEST'],
+    ['malformed JSON', () => http().post('/events').set(asOrganizer()).set('Content-Type', 'application/json').send('{"name":'), 400, 'BAD_REQUEST'],
+    ['body too large', () => http().post('/events').set(asOrganizer()).send({ name: 'x'.repeat(200_000) }), 413, 'PAYLOAD_TOO_LARGE'],
     ['non-UUID id', () => http().get('/events/123'), 400, 'REQUEST_VALIDATION_FAILED'],
     ['unknown route', () => http().get('/admin'), 404, 'ROUTE_NOT_FOUND'],
   ])('framework errors share the API error shape: %s', async (_case, send, status, code) => {
@@ -43,14 +45,36 @@ describe('HTTP hardening (e2e)', () => {
     });
   });
 
-  it('rejects bodies larger than the limit with 413', async () => {
-    await http().post('/events').send({ name: 'x'.repeat(200_000) }).expect(413);
+  it('validation errors never echo the received value (no reflected input)', async () => {
+    const response = await http().get('/events').query({ status: '<b>x</b>' }).expect(400);
+    expect(response.body.code).toBe('EVENT_INVALID_STATUS');
+    expect(response.body.message).not.toContain('<b>');
+  });
+
+  it('a corrupted row answers a generic 500 (server fault), never a 400 nor internal details', async () => {
+    const id = await scheduleEvent(app);
+    await dataSource.query(`ALTER TABLE events DROP CONSTRAINT ck_events_currency`);
+    try {
+      await dataSource.query(`UPDATE events SET currency = 'XXX' WHERE id = $1`, [id]);
+      const response = await http().get(`/events/${id}`).expect(500);
+      expect(response.body).toEqual({
+        statusCode: 500,
+        code: 'INTERNAL_ERROR',
+        message: 'Internal server error',
+        path: `/events/${id}`,
+        timestamp: expect.any(String),
+      });
+    } finally {
+      await dataSource.query(`DELETE FROM events WHERE id = $1`, [id]);
+      await dataSource.query(`ALTER TABLE events ADD CONSTRAINT ck_events_currency CHECK ("currency" IN ('PEN', 'USD', 'EUR'))`);
+    }
   });
 
   it('ignores __proto__ / constructor payloads without polluting prototypes', async () => {
     const startsAt = new Date(Date.now() + 864e5).toISOString();
     await http()
       .post('/events')
+      .set(asOrganizer())
       .set('Content-Type', 'application/json')
       .send(
         `{"name":"Concierto","venue":"Sala Proto","startsAt":"${startsAt}","capacity":10,"priceCents":0,"currency":"USD","__proto__":{"polluted":true},"constructor":{"prototype":{"polluted":true}}}`,
@@ -64,6 +88,7 @@ describe('HTTP hardening (e2e)', () => {
     const startsAt = new Date(Date.now() + 864e5).toISOString();
     const { body } = await http()
       .post('/events')
+      .set(asOrganizer())
       .send({ name, venue: 'Sala SQL', startsAt, capacity: 10, priceCents: 0, currency: 'USD' })
       .expect(201);
     expect((await http().get(`/events/${body.id}`).expect(200)).body.name).toBe(name);

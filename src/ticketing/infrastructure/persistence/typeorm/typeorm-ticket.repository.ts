@@ -1,23 +1,28 @@
 import { Injectable } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
+import { TypeOrmTransactionContext } from '../../../../shared/infrastructure/persistence/typeorm-transaction-context';
 import { Ticket } from '../../../domain/entities/ticket';
 import { TicketConcurrentModificationError } from '../../../domain/errors/ticketing.errors';
 import { TicketRepository } from '../../../domain/ports/ticket.repository';
 import { EventReference } from '../../../domain/value-objects/event-reference';
+import { HolderEmail } from '../../../domain/value-objects/holder-email';
 import { TicketCodeHash } from '../../../domain/value-objects/ticket-code-hash';
 import { TicketId } from '../../../domain/value-objects/ticket-id';
 import { TicketStatusValue } from '../../../domain/value-objects/ticket-status';
 import { TicketMapper } from './ticket.mapper';
 import { TicketOrmEntity } from './ticket.orm-entity';
 
-/** Adaptador real (PostgreSQL + TypeORM) del puerto TicketRepository, con bloqueo optimista. */
+/**
+ * Adaptador real (PostgreSQL + TypeORM) del puerto TicketRepository, con
+ * bloqueo optimista. Usa la transacción en curso si la hay.
+ */
 @Injectable()
 export class TypeOrmTicketRepository implements TicketRepository {
-  constructor(
-    @InjectRepository(TicketOrmEntity)
-    private readonly repository: Repository<TicketOrmEntity>,
-  ) {}
+  constructor(private readonly context: TypeOrmTransactionContext) {}
+
+  private get repository(): Repository<TicketOrmEntity> {
+    return this.context.getRepository(TicketOrmEntity);
+  }
 
   async save(ticket: Ticket): Promise<void> {
     const row = TicketMapper.toPersistence(ticket);
@@ -43,11 +48,20 @@ export class TypeOrmTicketRepository implements TicketRepository {
     return row ? TicketMapper.toDomain(row) : null;
   }
 
-  async findIssuedByEvent(eventId: EventReference): Promise<Ticket[]> {
+  async findIssuedByEvent(eventId: EventReference, limit: number): Promise<Ticket[]> {
     const rows = await this.repository.find({
       where: { eventId: eventId.value, status: TicketStatusValue.ISSUED },
       order: { purchasedAt: 'ASC', id: 'ASC' },
+      take: limit,
     });
     return rows.map((row) => TicketMapper.toDomain(row));
+  }
+
+  async countActiveByEventAndHolder(eventId: EventReference, holderEmail: HolderEmail): Promise<number> {
+    return this.repository.countBy({
+      eventId: eventId.value,
+      holderEmail: holderEmail.value,
+      status: In([TicketStatusValue.ISSUED, TicketStatusValue.USED]),
+    });
   }
 }

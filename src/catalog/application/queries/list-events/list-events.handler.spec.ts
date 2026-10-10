@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { Event } from '../../../domain/entities/event';
 import { InvalidEventStatusError } from '../../../domain/errors/event.errors';
 import { Capacity } from '../../../domain/value-objects/capacity';
@@ -14,7 +15,7 @@ const NOW = new Date('2027-01-01T00:00:00Z');
 const newEvent = (name: string, startsAt: string) =>
   Event.schedule(
     {
-      id: EventId.generate(),
+      id: EventId.create(randomUUID()),
       name: EventName.create(name),
       venue: Venue.create(`Sala ${name}`),
       startsAt: EventStart.create(startsAt),
@@ -39,16 +40,28 @@ describe('ListEventsHandler', () => {
     }
   });
 
-  it('lists the program ordered by start date', async () => {
-    expect((await handler.execute(new ListEventsQuery())).map((event) => event.name)).toEqual([
-      'Temprano',
-      'Cancelado',
-      'Tarde',
-    ]);
+  it('lists the program ordered by start date, as a page', async () => {
+    const page = await handler.execute(new ListEventsQuery());
+    expect(page.items.map((event) => event.name)).toEqual(['Temprano', 'Cancelado', 'Tarde']);
+    expect(page).toMatchObject({ limit: 20, offset: 0, nextOffset: null });
+  });
+
+  it('paginates with limit / offset and reports the next offset', async () => {
+    const first = await handler.execute(new ListEventsQuery(undefined, 2, 0));
+    expect(first.items.map((event) => event.name)).toEqual(['Temprano', 'Cancelado']);
+    expect(first.nextOffset).toBe(2);
+
+    const second = await handler.execute(new ListEventsQuery(undefined, 2, 2));
+    expect(second.items.map((event) => event.name)).toEqual(['Tarde']);
+    expect(second.nextOffset).toBeNull();
+  });
+
+  it('never returns more than the maximum page size', async () => {
+    expect((await handler.execute(new ListEventsQuery(undefined, 10_000, 0))).limit).toBe(100);
   });
 
   it('filters by status', async () => {
-    expect((await handler.execute(new ListEventsQuery('cancelled'))).map((event) => event.name)).toEqual(['Cancelado']);
+    expect((await handler.execute(new ListEventsQuery('cancelled'))).items.map((event) => event.name)).toEqual(['Cancelado']);
   });
 
   it('rejects an unknown status', async () => {

@@ -26,3 +26,11 @@ export function toEventView(event: Event): EventView {
     updatedAt: event.updatedAt.toISOString(),
   };
 }
+
+/** Una página de la cartelera. `nextOffset` es null cuando no hay más eventos. */
+export interface EventPage {
+  items: EventView[];
+  limit: number;
+  offset: number;
+  nextOffset: number | null;
+}

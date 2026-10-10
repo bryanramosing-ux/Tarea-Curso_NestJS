@@ -12,7 +12,8 @@ export interface SaleableEventProps {
 
 /**
  * Lo que el contexto de venta necesita saber de un evento del catálogo:
- * aforo, inicio, precio y si se puede vender. Se obtiene por el puerto
+ * aforo, inicio, precio y si sigue programado (se puede vender y admitir
+ * público) o fue cancelado. Se obtiene por el puerto
  * EventCatalog (anti-corruption layer hacia el contexto Catálogo).
  */
 export class SaleableEvent {
@@ -38,8 +39,14 @@ export class SaleableEvent {
     return new Date(this.start);
   }
 
+  /** El catálogo lo tiene programado (SCHEDULED): se le pueden vender entradas. */
   isOnSale(): boolean {
     return this.sellable;
+  }
+
+  /** El catálogo lo canceló: no se vende y sus entradas no dan acceso (RN-010, RN-016). */
+  isCancelled(): boolean {
+    return !this.sellable;
   }
 
   equals(other: SaleableEvent): boolean {
